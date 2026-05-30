@@ -1,0 +1,116 @@
+{
+  "model": "Holt-Winters (additive trend + seasonal)",
+  "generated_at": "2026-05-31",
+  "last_actual_date": "2025-12-31",
+  "last_actual_val": 17518,
+  "mape_test_2024": 10.59,
+  "forecast_horizon": 14,
+  "daily_forecasts": [
+    {
+      "date": "2026-01-01",
+      "forecast": 15035.0,
+      "lower_95": 7349.0,
+      "upper_95": 22721.0,
+      "risk": "🟡 CAUTION"
+    },
+    {
+      "date": "2026-01-02",
+      "forecast": 14677.0,
+      "lower_95": 6991.0,
+      "upper_95": 22363.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-03",
+      "forecast": 14068.0,
+      "lower_95": 6382.0,
+      "upper_95": 21754.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-04",
+      "forecast": 13626.0,
+      "lower_95": 5940.0,
+      "upper_95": 21312.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-05",
+      "forecast": 13098.0,
+      "lower_95": 5412.0,
+      "upper_95": 20784.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-06",
+      "forecast": 12576.0,
+      "lower_95": 4890.0,
+      "upper_95": 20262.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-07",
+      "forecast": 12281.0,
+      "lower_95": 4595.0,
+      "upper_95": 19967.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-08",
+      "forecast": 11982.0,
+      "lower_95": 4296.0,
+      "upper_95": 19668.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-09",
+      "forecast": 11690.0,
+      "lower_95": 4004.0,
+      "upper_95": 19376.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-10",
+      "forecast": 11471.0,
+      "lower_95": 3785.0,
+      "upper_95": 19157.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-11",
+      "forecast": 11154.0,
+      "lower_95": 3468.0,
+      "upper_95": 18840.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-12",
+      "forecast": 10854.0,
+      "lower_95": 3168.0,
+      "upper_95": 18540.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-13",
+      "forecast": 10713.0,
+      "lower_95": 3027.0,
+      "upper_95": 18399.0,
+      "risk": "🟠 WARNING"
+    },
+    {
+      "date": "2026-01-14",
+      "forecast": 10554.0,
+      "lower_95": 2868.0,
+      "upper_95": 18240.0,
+      "risk": "🟠 WARNING"
+    }
+  ],
+  "summary": {
+    "min_forecast": 10554,
+    "min_date": "2026-01-14",
+    "max_risk_level": "🟠 WARNING",
+    "days_in_caution": 14,
+    "days_in_warning": 13,
+    "days_in_critical": 0
+  }
+}

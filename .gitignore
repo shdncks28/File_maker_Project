@@ -26,8 +26,6 @@ ENV/
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# ── 생성된 데이터 (원본 CSV로 재생성 가능) ───────────────────────
-processed/
 
 # ── IDE / 시스템 ─────────────────────────────────────────────────
 .vscode/
