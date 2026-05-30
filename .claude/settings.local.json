@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/shdnc/OneDrive/Desktop/UNIST -name \"*.ipynb\" 2>/dev/null | head -20)",
+      "Bash(find /c/Users/shdnc -name \"atari_final_20251115.ipynb\" 2>/dev/null)",
+      "Read(//c/Users/shdnc/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/f2e808e2-93c8-4194-b2ce-acbac9860767/2699334a-069e-4912-abe3-339de4892e12/skills/pptx/**)",
+      "Bash(python scripts/extract-text.py \"C:\\\\Users\\\\shdnc\\\\Downloads\\\\AIP2_FinalProject_Instruction.pptx\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import sys; sys.stdout.buffer.write\\(sys.stdin.buffer.read\\(\\)\\)\")",
+      "Bash(python -c \"import torch; print\\('torch:', torch.__version__\\); print\\('CUDA available:', torch.cuda.is_available\\(\\)\\)\")",
+      "Bash(.venv\\\\Scripts\\\\python.exe --version)",
+      "Bash(python)",
+      "Bash(python scripts/extract-text.py \"C:\\\\Users\\\\shdnc\\\\Downloads\\\\Inderstrial Operation Management Term Project.pptx\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"import fitz; print\\('ok'\\)\")"
+    ]
+  }
+}
