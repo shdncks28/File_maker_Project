@@ -12,7 +12,19 @@
       "Bash(python)",
       "Bash(python scripts/extract-text.py \"C:\\\\Users\\\\shdnc\\\\Downloads\\\\Inderstrial Operation Management Term Project.pptx\")",
       "Bash(pip install *)",
-      "Bash(python -c \"import fitz; print\\('ok'\\)\")"
+      "Bash(python -c \"import fitz; print\\('ok'\\)\")",
+      "Bash(pip show *)",
+      "Bash(python validate_phase2.py)",
+      "Bash(git check-ignore *)",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python -c \"import plotly, streamlit; print\\(f'plotly {plotly.__version__} / streamlit {streamlit.__version__}'\\)\")",
+      "Bash(start cmd *)",
+      "Bash(python -m streamlit run app.py --server.port 8501 --server.headless true)",
+      "WebFetch(domain:localhost)",
+      "PowerShell(cd \"C:\\\\Users\\\\shdnc\\\\OneDrive\\\\Desktop\\\\UNIST\\\\2026 생운관\\\\File_maker_Project\"; $job = Start-Job -ScriptBlock { cd \"C:\\\\Users\\\\shdnc\\\\OneDrive\\\\Desktop\\\\UNIST\\\\2026 생운관\\\\File_maker_Project\"; python -m streamlit run app.py --server.port 8501 --server.headless true 2>&1 }; Start-Sleep -Seconds 6; Receive-Job $job; Stop-Job $job; Remove-Job $job)",
+      "PowerShell(Start-Process \"http://localhost:8501\")"
     ]
   }
 }
