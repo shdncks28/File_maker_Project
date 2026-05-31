@@ -424,71 +424,101 @@ def run_pipeline():
 # 차트 함수
 # ══════════════════════════════════════════════════════════════════
 def chart_forecast(result):
-    fc_df   = pd.DataFrame(result['forecast_14d'])
-    fc_dates= pd.to_datetime(fc_df['date'])
-    fc_vals = fc_df['forecast'].values
+    fc_df    = pd.DataFrame(result['forecast_14d'])
+    fc_dates = pd.to_datetime(fc_df['date'])
+    fc_vals  = fc_df['forecast'].values
 
+    today      = pd.Timestamp.today().normalize()
+    today_val  = result['current_inventory']
+
+    # 역사적 데이터에서 최근 30일치만 추출 (같은 연도 내 데이터)
     daily  = load_daily_inventory()
-    recent = daily.set_index('date')['inventory'].iloc[-60:]
+    ts_all = daily.set_index('date')['inventory'].sort_index()
+    cutoff = today - pd.Timedelta(days=30)
+    recent = ts_all[ts_all.index >= cutoff]
 
     fig = go.Figure()
 
-    # 최근 60일 실제
-    fig.add_trace(go.Scatter(
-        x=recent.index, y=recent.values,
-        name='실제 보유량 (최근 60일)',
-        line=dict(color='#1565c0', width=1.8),
-        hovertemplate='%{x|%Y-%m-%d}<br>보유량: %{y:,} unit<extra></extra>'
-    ))
-
-    # 신뢰구간
-    if 'lower_95' in fc_df.columns:
+    # ── 최근 30일 역사 데이터 (있는 경우) ──────────────────────
+    if len(recent) > 0:
         fig.add_trace(go.Scatter(
-            x=pd.concat([fc_dates, fc_dates[::-1]]),
-            y=list(fc_df['upper_95']) + list(fc_df['lower_95'])[::-1],
-            fill='toself', fillcolor='rgba(220,50,50,0.12)',
-            line=dict(color='rgba(0,0,0,0)'),
-            name='95% 신뢰구간', showlegend=True,
-            hoverinfo='skip'
+            x=recent.index, y=recent.values,
+            name='실제 보유량 (최근 30일)',
+            line=dict(color='#1565c0', width=2.0),
+            hovertemplate='%{x|%Y-%m-%d}<br>%{y:,} unit<extra></extra>'
         ))
 
-    # 14일 예측
+    # ── 오늘 스크래핑 값 (앵커 포인트) ──────────────────────────
     fig.add_trace(go.Scatter(
-        x=fc_dates, y=fc_vals,
-        name='14일 예측 (Holt-Winters)',
+        x=[today], y=[today_val],
+        name=f'오늘 실측 ({today.strftime("%m/%d")})',
+        mode='markers',
+        marker=dict(color='#1565c0', size=10, symbol='circle',
+                    line=dict(color='white', width=2)),
+        hovertemplate=f'{today.strftime("%Y-%m-%d")}<br>{today_val:,} unit<extra></extra>'
+    ))
+
+    # ── 오늘 → 예측 연결선 ───────────────────────────────────────
+    connect_x = [today] + list(fc_dates)
+    connect_y = [today_val] + list(fc_vals)
+    fig.add_trace(go.Scatter(
+        x=connect_x, y=connect_y,
+        name='14일 예측',
         line=dict(color='#c62828', width=2.2, dash='dash'),
-        mode='lines+markers', marker=dict(size=5),
+        mode='lines+markers',
+        marker=dict(size=5, color='#c62828'),
         hovertemplate='%{x|%Y-%m-%d}<br>예측: %{y:,} unit<extra></extra>'
     ))
 
-    # 임계선
-    x_range = [recent.index[0], fc_dates.iloc[-1]]
-    for label, val, color, dash in [
-        ('주의 (20,000)', THRESHOLDS['CAUTION'],  '#ffb300', 'dot'),
-        ('경고 (15,000)', THRESHOLDS['WARNING'],  '#ff6d00', 'dot'),
-        ('위기 (10,000)', THRESHOLDS['CRITICAL'], '#d50000', 'longdash'),
-    ]:
-        fig.add_shape(type='line', x0=x_range[0], x1=x_range[1],
-                      y0=val, y1=val,
-                      line=dict(color=color, width=1.3, dash=dash))
-        fig.add_annotation(x=x_range[1], y=val, text=label,
-                           showarrow=False, xanchor='right',
-                           font=dict(size=10, color=color), yshift=6)
+    # ── 신뢰구간 ────────────────────────────────────────────────
+    if 'lower_95' in fc_df.columns:
+        fig.add_trace(go.Scatter(
+            x=list(fc_dates) + list(fc_dates[::-1]),
+            y=list(fc_df['upper_95']) + list(fc_df['lower_95'])[::-1],
+            fill='toself', fillcolor='rgba(198,40,40,0.10)',
+            line=dict(color='rgba(0,0,0,0)'),
+            name='95% 신뢰구간',
+            hoverinfo='skip'
+        ))
 
-    # 예측 시작 구분선
-    fc_start = fc_dates.iloc[0]
-    fig.add_vline(x=fc_start, line_width=1.2, line_dash='dash', line_color='gray')
-    fig.add_annotation(x=fc_start, y=fc_vals.max()*1.05,
-                       text='예측 →', showarrow=False,
-                       font=dict(size=10, color='gray'))
+    # ── KRC 위험 임계선 ─────────────────────────────────────────
+    x_start = (recent.index[0] if len(recent) > 0 else today - pd.Timedelta(days=5))
+    x_end   = fc_dates.iloc[-1]
+    daily_need = today_val / result['rbc_days'] if result.get('rbc_days', 0) > 0 else 5052
+
+    for label, days, color, dash in [
+        ('관심 (5일분)',  5, '#1565c0', 'dot'),
+        ('주의 (3일분)',  3, '#ffb300', 'dot'),
+        ('경계 (2일분)',  2, '#ff6d00', 'dash'),
+        ('심각 (1일분)',  1, '#d50000', 'longdash'),
+    ]:
+        threshold_val = days * daily_need
+        fig.add_shape(type='line', x0=x_start, x1=x_end,
+                      y0=threshold_val, y1=threshold_val,
+                      line=dict(color=color, width=1.2, dash=dash))
+        fig.add_annotation(x=x_end, y=threshold_val, text=label,
+                           showarrow=False, xanchor='right',
+                           font=dict(size=9, color=color), yshift=6)
+
+    # ── 예측 시작 구분선 ─────────────────────────────────────────
+    fig.add_vline(x=today, line_width=1.3, line_dash='dash', line_color='#555')
+    fig.add_annotation(
+        x=today, y=max(connect_y) * 1.04,
+        text='오늘 →', showarrow=False,
+        font=dict(size=10, color='#555'), xanchor='left'
+    )
+
+    # ── x축 범위: 30일 전 ~ 14일 후 ─────────────────────────────
+    x_min = today - pd.Timedelta(days=32)
+    x_max = fc_dates.iloc[-1] + pd.Timedelta(days=1)
 
     fig.update_layout(
-        title=dict(text='혈액 보유량 14일 예측', font=dict(size=14)),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(tickformat=',d', title='보유량 (unit)'),
-        legend=dict(orientation='h', y=-0.18),
-        height=360,
-        margin=dict(l=10, r=10, t=40, b=10),
+        title=dict(text='혈액 보유량 14일 예측 (오늘 실측 기준)', font=dict(size=14)),
+        xaxis=dict(showgrid=False, range=[x_min, x_max]),
+        yaxis=dict(tickformat=',d', title='보유량 (unit)', rangemode='tozero'),
+        legend=dict(orientation='h', y=-0.22),
+        height=380,
+        margin=dict(l=10, r=10, t=45, b=10),
         paper_bgcolor='white', plot_bgcolor='#fafafa',
         hovermode='x unified',
     )
