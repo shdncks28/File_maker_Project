@@ -12,6 +12,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
+from scraper import scrape_blood_inventory, KRC_RISK_LEVELS
 
 warnings.filterwarnings('ignore')
 load_dotenv()
@@ -82,9 +83,19 @@ def load_monthly_by_type():
     return pd.read_csv(f'{PROCESSED}/monthly_inventory_by_type.csv', parse_dates=['date'])
 
 THRESHOLDS  = load_thresholds()
-RISK_COLOR  = {'NORMAL':'#4caf50','CAUTION':'#ffb300','WARNING':'#ff6d00','CRITICAL':'#d50000'}
-RISK_EMOJI  = {'NORMAL':'🟢','CAUTION':'🟡','WARNING':'🟠','CRITICAL':'🔴'}
-RISK_BG     = {'NORMAL':'#e8f5e9','CAUTION':'#fff8e1','WARNING':'#fff3e0','CRITICAL':'#ffebee'}
+
+# KRC 공식 위험 단계 색상/이모지 (일수 기준)
+RISK_COLOR  = {'NORMAL':'#4caf50','WATCH':'#1565c0','CAUTION':'#ffb300','WARNING':'#ff6d00','CRITICAL':'#d50000'}
+RISK_EMOJI  = {'NORMAL':'🟢','WATCH':'🔵','CAUTION':'🟡','WARNING':'🟠','CRITICAL':'🔴'}
+RISK_BG     = {'NORMAL':'#e8f5e9','WATCH':'#e3f2fd','CAUTION':'#fff8e1','WARNING':'#fff3e0','CRITICAL':'#ffebee'}
+
+def classify_krc_risk(days: float) -> str:
+    """KRC 공식 기준: 적혈구 보유일수 → 위험 등급"""
+    if days < 1: return 'CRITICAL'
+    if days < 2: return 'WARNING'
+    if days < 3: return 'CAUTION'
+    if days < 5: return 'WATCH'
+    return 'NORMAL'
 
 # ══════════════════════════════════════════════════════════════════
 # LLM 설정
@@ -120,6 +131,10 @@ class BloodAgentState(TypedDict):
     run_date: str; current_inventory: int; last_data_date: str
     trend_7d_direction: str; trend_7d_rate: float
     current_season: str; is_risk_season: bool
+    rbc_days: float          # 적혈구 보유일수 (KRC 기준)
+    rbc_by_type: dict        # 혈액형별 RBC 보유량
+    plt_rate: float          # 혈소판 보유율 (%)
+    scrape_success: bool     # 스크래핑 성공 여부
     forecast_14d: list; forecast_min_value: int; forecast_min_date: str
     shortage_probability: float; days_until_warning: int
     risk_level: str; risk_score: int; component_risks: dict; historical_context: str
@@ -128,57 +143,155 @@ class BloodAgentState(TypedDict):
 
 def sensing_agent(state):
     logs = state.get('agent_logs', [])
-    logs.append("🔵 **Sensing Agent** — 데이터 수집 시작")
+    logs.append("🔵 **Sensing Agent** — bloodinfo.net 실시간 스크래핑")
+
+    # ── bloodinfo.net 실시간 스크래핑 ────────────────────────────
+    scrape_ok = False
+    rbc_days = 0.0; rbc_by_type = {}; plt_rate = 0.0
+    try:
+        live = scrape_blood_inventory()
+        cur       = int(live['rbc']['total_units'])
+        rbc_days  = live['rbc']['total_days']
+        rbc_by_type = live['rbc']['units_by_type']
+        plt_rate  = live['plt']['total_rate']
+        last_date = live['date']
+        scrape_ok = True
+        logs.append(f"  → 스크래핑 성공: **{cur:,} unit** ({last_date})")
+        logs.append(f"  → RBC 보유일수: **{rbc_days}일**  |  PLT 보유율: {plt_rate}%")
+    except Exception as e:
+        # 스크래핑 실패 시 CSV 마지막 행으로 폴백
+        logs.append(f"  → ⚠️ 스크래핑 실패 ({e}) — CSV 데이터로 대체")
+        df = load_daily_inventory()
+        ts = df.set_index('date')['inventory']
+        cur = int(ts.iloc[-1])
+        last_date = ts.index.max().strftime('%Y-%m-%d')
+        # 보유일수 추정: 역사적 1일 소요량 평균으로 계산
+        daily_need_avg = 5052  # 역사적 평균 1일 소요량
+        rbc_days = round(cur / daily_need_avg, 1)
+
+    # ── 7일 추세 (역사적 CSV 기반) ────────────────────────────────
     df = load_daily_inventory()
     ts = df.set_index('date')['inventory']
-    cur = int(ts.iloc[-1]); last_date = ts.index.max().strftime('%Y-%m-%d')
     slope = float(np.polyfit(range(7), ts.iloc[-7:].values, 1)[0])
     direction = '증가' if slope > 200 else ('감소' if slope < -200 else '보합')
-    month = ts.index.max().month
-    season = {1:'겨울',2:'겨울',3:'봄',4:'봄',5:'봄',6:'여름',7:'여름',8:'여름',9:'가을',10:'가을',11:'가을',12:'겨울'}[month]
-    is_risk = month in [3,4,10,11,12]
-    logs.append(f"  → 현재 보유량: **{cur:,} unit** ({last_date})")
+
+    # ── 계절 정보 ─────────────────────────────────────────────────
+    month = pd.Timestamp.today().month
+    season = {1:'겨울',2:'겨울',3:'봄',4:'봄',5:'봄',
+              6:'여름',7:'여름',8:'여름',
+              9:'가을',10:'가을',11:'가을',12:'겨울'}[month]
+    is_risk = month in [3, 4, 10, 11, 12]
+
     logs.append(f"  → 7일 추세: {direction} ({slope:+.0f} unit/일)  |  시즌: {season}")
-    return {'current_inventory':cur,'last_data_date':last_date,'trend_7d_direction':direction,
-            'trend_7d_rate':round(slope,1),'current_season':season,'is_risk_season':is_risk,'agent_logs':logs}
+
+    return {
+        'current_inventory':  cur,
+        'last_data_date':     last_date,
+        'trend_7d_direction': direction,
+        'trend_7d_rate':      round(slope, 1),
+        'current_season':     season,
+        'is_risk_season':     is_risk,
+        'rbc_days':           rbc_days,
+        'rbc_by_type':        rbc_by_type,
+        'plt_rate':           plt_rate,
+        'scrape_success':     scrape_ok,
+        'agent_logs':         logs,
+    }
 
 def forecasting_agent(state):
     logs = state.get('agent_logs', [])
-    logs.append("🟡 **Forecasting Agent** — 예측 데이터 로드")
-    fc = load_forecast()
-    fc_list = fc['daily_forecasts']; fc_vals = [r['forecast'] for r in fc_list]
-    sp = sum(1 for v in fc_vals if v < THRESHOLDS['CAUTION']) / len(fc_vals)
-    d_warn = next((i for i,v in enumerate(fc_vals) if v < THRESHOLDS['WARNING']), len(fc_vals))
-    min_idx = int(np.argmin(fc_vals))
-    logs.append(f"  → 예측 최저: **{fc_vals[min_idx]:,} unit** ({fc_list[min_idx]['date']})")
-    logs.append(f"  → 부족 확률: {sp*100:.0f}%  |  경고 도달: {d_warn}일 후")
-    return {'forecast_14d':fc_list,'forecast_min_value':int(fc_vals[min_idx]),
-            'forecast_min_date':fc_list[min_idx]['date'],'shortage_probability':round(sp,3),
-            'days_until_warning':d_warn,'agent_logs':logs}
+    logs.append("🟡 **Forecasting Agent** — 오늘 실제값 기반 14일 예측")
+
+    today_actual = state['current_inventory']
+    rbc_days     = state['rbc_days']
+
+    # 역사적 일별 패턴
+    df  = load_daily_inventory()
+    ts  = df.set_index('date')['inventory'].sort_index()
+    today     = pd.Timestamp.today().normalize()
+    today_doy = today.dayofyear
+    daily_avg = ts.groupby(ts.index.dayofyear).mean()
+    daily_std = ts.groupby(ts.index.dayofyear).std().fillna(0)
+    hist_today  = daily_avg.get(today_doy, daily_avg.mean())
+    daily_need  = (today_actual / rbc_days) if rbc_days > 0 else 5052
+
+    # 14일 예측: 오늘 실제값 + 역사적 계절 변화량
+    fc_list = []
+    for k in range(1, 15):
+        future_date = today + pd.Timedelta(days=k)
+        future_doy  = future_date.dayofyear
+        hist_future = daily_avg.get(future_doy, daily_avg.mean())
+        delta       = hist_future - hist_today
+        fc_val      = max(0, round(today_actual + delta))
+        fc_std      = float(daily_std.get(future_doy, daily_std.mean()))
+        fc_days     = round(fc_val / daily_need, 1) if daily_need > 0 else 0
+        fc_list.append({
+            'date':     future_date.strftime('%Y-%m-%d'),
+            'forecast': fc_val,
+            'lower_95': max(0, round(fc_val - 1.96 * fc_std)),
+            'upper_95': round(fc_val + 1.96 * fc_std),
+            'days':     fc_days,
+            'risk':     classify_krc_risk(fc_days),
+        })
+
+    fc_vals   = [r['forecast'] for r in fc_list]
+    fc_days_l = [r['days']     for r in fc_list]
+    min_idx   = int(np.argmin(fc_days_l))
+    d_warn    = next((i for i, d in enumerate(fc_days_l) if d < 2), len(fc_list))
+    shortage_prob = sum(1 for d in fc_days_l if d < 3) / len(fc_list)
+
+    logs.append(f"  → 예측 최저: **{fc_list[min_idx]['days']}일분** ({fc_list[min_idx]['date']})")
+    logs.append(f"  → 주의 이하(3일분): {sum(1 for d in fc_days_l if d < 3)}일/14일")
+    logs.append(f"  → 기준: {today.strftime('%Y-%m-%d')} 실제 **{today_actual:,} unit** 앵커")
+
+    return {
+        'forecast_14d':         fc_list,
+        'forecast_min_value':   int(fc_vals[min_idx]),
+        'forecast_min_date':    fc_list[min_idx]['date'],
+        'shortage_probability': round(shortage_prob, 3),
+        'days_until_warning':   d_warn,
+        'agent_logs':           logs,
+    }
 
 def risk_agent(state):
     logs = state.get('agent_logs', [])
-    logs.append("🟠 **Risk Agent** — 위험 점수 산출")
-    cur=state['current_inventory']; fc_min=state['forecast_min_value']
-    d_warn=state['days_until_warning']; is_risk=state['is_risk_season']; sp=state['shortage_probability']
-    score=0
-    if cur<10000: score+=35
-    elif cur<15000: score+=25
-    elif cur<20000: score+=15
-    elif cur<25000: score+=5
-    if fc_min<10000: score+=30
-    elif fc_min<15000: score+=20
-    elif fc_min<20000: score+=10
-    if d_warn<=3: score+=20
-    elif d_warn<=7: score+=15
-    elif d_warn<=14: score+=10
-    score+=int(sp*10);
-    if is_risk: score+=5
-    score=min(100,score)
-    if score>=65: lvl='CRITICAL'
-    elif score>=45: lvl='WARNING'
-    elif score>=25: lvl='CAUTION'
-    else: lvl='NORMAL'
+    logs.append("🟠 **Risk Agent** — KRC 공식 기준 위험 점수 산출")
+
+    rbc_days = state['rbc_days']      # 오늘 실제 보유일수
+    fc_days_list = [r['days'] for r in state['forecast_14d']]
+    fc_min_days  = min(fc_days_list) if fc_days_list else rbc_days
+    d_warn   = state['days_until_warning']
+    is_risk  = state['is_risk_season']
+    sp       = state['shortage_probability']
+
+    # ── 위험 점수 (KRC 일수 기준, 0-100) ─────────────────────────
+    score = 0
+    # 현재 보유일수 (0-40점)
+    if   rbc_days < 1: score += 40
+    elif rbc_days < 2: score += 30
+    elif rbc_days < 3: score += 20
+    elif rbc_days < 5: score += 10
+
+    # 예측 최저 보유일수 (0-30점)
+    if   fc_min_days < 1: score += 30
+    elif fc_min_days < 2: score += 22
+    elif fc_min_days < 3: score += 14
+    elif fc_min_days < 5: score += 6
+
+    # 경고 도달 여유 (0-20점)
+    if   d_warn <= 2:  score += 20
+    elif d_warn <= 5:  score += 15
+    elif d_warn <= 10: score += 8
+
+    # 부족 확률 (0-5점)
+    score += int(sp * 5)
+    # 위험 시즌 (0-5점)
+    if is_risk: score += 5
+
+    score = min(100, score)
+
+    # KRC 공식 위험 등급 (일수 기반)
+    lvl = classify_krc_risk(rbc_days)
     mbt = load_monthly_by_type()
     lm = mbt['date'].max(); ld = mbt[mbt['date']==lm]
     ha = mbt[mbt['date'].dt.month==lm.month].groupby('component_code')['inventory'].mean()
@@ -280,12 +393,29 @@ def build_pipeline():
 def run_pipeline():
     app = build_pipeline()
     init = {
-        'run_date':pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'),'current_inventory':0,
-        'last_data_date':'','trend_7d_direction':'','trend_7d_rate':0.0,
-        'current_season':'','is_risk_season':False,'forecast_14d':[],'forecast_min_value':0,
-        'forecast_min_date':'','shortage_probability':0.0,'days_until_warning':14,
-        'risk_level':'NORMAL','risk_score':0,'component_risks':{},'historical_context':'',
-        'intervention_level':'NONE','recommended_action':'','action_reasoning':'',
+        'run_date':            pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'),
+        'current_inventory':   0,
+        'last_data_date':      '',
+        'trend_7d_direction':  '',
+        'trend_7d_rate':       0.0,
+        'current_season':      '',
+        'is_risk_season':      False,
+        'rbc_days':            0.0,
+        'rbc_by_type':         {},
+        'plt_rate':            0.0,
+        'scrape_success':      False,
+        'forecast_14d':        [],
+        'forecast_min_value':  0,
+        'forecast_min_date':   '',
+        'shortage_probability':0.0,
+        'days_until_warning':  14,
+        'risk_level':          'NORMAL',
+        'risk_score':          0,
+        'component_risks':     {},
+        'historical_context':  '',
+        'intervention_level':  'NONE',
+        'recommended_action':  '',
+        'action_reasoning':    '',
         'final_report':'','agent_logs':[],
     }
     return app.invoke(init)
@@ -508,19 +638,21 @@ else:
     # ── KPI 카드 ─────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
+        src = "📡 실시간" if result.get('scrape_success') else "📂 CSV"
         st.metric("🩸 현재 보유량",
                   f"{result['current_inventory']:,} unit",
-                  f"{result['trend_7d_rate']:+.0f} unit/일")
+                  f"{result['rbc_days']}일분  ({src})")
     with c2:
-        st.metric(f"{RISK_EMOJI[risk]} 위험 등급",
+        st.metric(f"{RISK_EMOJI.get(risk,'❓')} 위험 등급",
                   risk,
                   f"점수 {result['risk_score']}/100")
     with c3:
+        min_days = min((r['days'] for r in result['forecast_14d']), default=0)
         st.metric("📉 14일 예측 최저",
-                  f"{result['forecast_min_value']:,} unit",
+                  f"{min_days}일분",
                   result['forecast_min_date'])
     with c4:
-        lvl = result.get('intervention_level','NONE')
+        lvl = result.get('intervention_level', 'NONE')
         st.metric("📢 권고 대응",
                   lvl,
                   result['current_season'])
