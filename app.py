@@ -498,6 +498,42 @@ def chart_forecast(result):
     )
     return fig
 
+def chart_components(result):
+    """제제별 보유량 — 역사 평균 대비 % (CSV 기반)"""
+    comp   = result.get('component_risks', {})
+    if not comp:
+        return go.Figure()
+    names  = list(comp.keys())
+    ratios = [v['ratio'] * 100 for v in comp.values()]
+    colors = [RISK_COLOR.get(v['level'], '#4caf50') for v in comp.values()]
+    labels = {'RBC':'농축적혈구','PLT':'농축혈소판','FFP':'신선동결혈장','SDP':'성분채혈혈소판'}
+
+    fig = go.Figure(go.Bar(
+        x=[labels.get(n, n) for n in names], y=ratios,
+        marker_color=colors, marker_line_color='white', marker_line_width=2,
+        text=[f'{v:.0f}%' for v in ratios], textposition='outside',
+        hovertemplate='%{x}<br><b>%{y:.1f}%</b><extra></extra>'
+    ))
+    for val, color, label in [
+        (100, '#9e9e9e', '역사 평균'),
+        (85,  '#ffb300', '혈소판 기준'),
+        (75,  '#ff6d00', '일반 기준'),
+    ]:
+        fig.add_hline(y=val, line_dash='dot', line_color=color, line_width=1.3,
+                      annotation_text=label, annotation_position='top right',
+                      annotation_font_size=9, annotation_font_color=color)
+
+    fig.update_layout(
+        title=dict(text='제제별 보유량 (역사 평균 대비 %)', font=dict(size=13, color='#333')),
+        yaxis=dict(range=[0, max(ratios) * 1.25 if ratios else 140], title='%',
+                   showgrid=True, gridcolor='#f0f0f0'),
+        height=340, margin=dict(l=0, r=60, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        showlegend=False,
+    )
+    return fig
+
+
 def chart_blood_types(result):
     """혈액형별 RBC 보유일수 차트 (스크래핑 실시간 데이터)"""
     rbc_by_type  = result.get('rbc_by_type', {})
@@ -658,7 +694,11 @@ col_l, col_r = st.columns([3, 2])
 with col_l:
     st.plotly_chart(chart_forecast(result), use_container_width=True)
 with col_r:
-    st.plotly_chart(chart_blood_types(result), use_container_width=True)
+    tab1, tab2 = st.tabs(["🩸 혈액형별 보유일수", "📊 제제별 보유량"])
+    with tab1:
+        st.plotly_chart(chart_blood_types(result), use_container_width=True)
+    with tab2:
+        st.plotly_chart(chart_components(result), use_container_width=True)
 
 st.divider()
 
