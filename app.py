@@ -983,7 +983,9 @@ st.divider()
 # 메인 차트 2열
 col_l, col_r = st.columns([3, 2])
 with col_l:
-    st.plotly_chart(chart_forecast(result), use_container_width=True)
+    tab_fc, = st.tabs(["📅 14일 예측"])
+    with tab_fc:
+        st.plotly_chart(chart_forecast(result), use_container_width=True)
 with col_r:
     tab1, tab2 = st.tabs(["🩸 혈액형별 보유일수", "📊 제제별 보유량"])
     with tab1:
