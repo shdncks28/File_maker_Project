@@ -614,6 +614,297 @@ def chart_historical(n_years=3):
     )
     return fig
 
+
+# ──────────────────────────────────────────────────────────────────
+#  분석 1: 캠페인 시뮬레이션
+# ──────────────────────────────────────────────────────────────────
+def chart_campaign_sim(result):
+    """헌혈 캠페인 강도별 14일 보유량 시뮬레이션"""
+    fc_df      = pd.DataFrame(result['forecast_14d'])
+    today      = pd.Timestamp.today().normalize()
+    today_val  = result['current_inventory']
+    rbc_days   = result.get('rbc_days', 0)
+    daily_need = today_val / rbc_days if rbc_days > 0 else 5052
+
+    fc_dates = pd.to_datetime(fc_df['date'])
+    all_x    = [today] + list(fc_dates)
+    base_y   = [today_val] + list(fc_df['forecast'].values)
+
+    fig = go.Figure()
+
+    # 신뢰구간 (기준선)
+    if 'lower_95' in fc_df.columns:
+        fig.add_trace(go.Scatter(
+            x=list(fc_dates) + list(fc_dates[::-1]),
+            y=list(fc_df['upper_95']) + list(fc_df['lower_95'])[::-1],
+            fill='toself', fillcolor='rgba(198,40,40,0.08)',
+            line=dict(color='rgba(0,0,0,0)'), name='기준 95% CI',
+            hoverinfo='skip', showlegend=False,
+        ))
+
+    # 기준선 (캠페인 없음)
+    fig.add_trace(go.Scatter(
+        x=all_x, y=base_y,
+        name='현재 추세 (캠페인 없음)',
+        line=dict(color='#c62828', width=2.5, dash='dash'),
+        mode='lines+markers',
+        marker=dict(size=5),
+        hovertemplate='캠페인 없음<br>%{x|%m/%d}: <b>%{y:,} unit</b><extra></extra>'
+    ))
+
+    # 캠페인 시나리오 3개
+    scenarios = [
+        ('+5%  — SMS 정기헌혈자',   0.05, '#43a047', 'dot'),
+        ('+10% — SNS 집중 캠페인', 0.10, '#1976d2', 'dash'),
+        ('+15% — 긴급 전채널 캠페인', 0.15, '#7b1fa2', 'solid'),
+    ]
+    for name, rate, color, dash in scenarios:
+        extra_per_day = daily_need * rate
+        # k번째 날부터 누적으로 보유량 증가
+        scenario_y = [today_val] + [
+            fc_df.iloc[k]['forecast'] + extra_per_day * (k + 1)
+            for k in range(len(fc_df))
+        ]
+        fig.add_trace(go.Scatter(
+            x=all_x, y=scenario_y,
+            name=name,
+            line=dict(color=color, width=2, dash=dash),
+            hovertemplate=f'{name}<br>%{{x|%m/%d}}: <b>%{{y:,}} unit</b><extra></extra>'
+        ))
+
+    # KRC 임계선
+    for days, color, label in [
+        (5, '#1565c0', '관심(5일)'),
+        (3, '#ffb300', '주의(3일)'),
+        (2, '#ff6d00', '경계(2일)'),
+    ]:
+        v = days * daily_need
+        fig.add_hline(y=v, line_dash='dot', line_color=color, line_width=1.2,
+                      annotation_text=label, annotation_position='bottom right',
+                      annotation_font_size=9, annotation_font_color=color)
+
+    # D+14 차이 비교 annotation
+    d14_base = base_y[-1]
+    for name, rate, color, _ in scenarios:
+        d14_val = base_y[-1] + daily_need * rate * 14
+        diff = d14_val - d14_base
+        fig.add_annotation(
+            x=all_x[-1], y=d14_val,
+            text=f'+{diff:,.0f}',
+            showarrow=False, xanchor='left', xshift=5,
+            font=dict(size=9, color=color)
+        )
+
+    fig.update_layout(
+        title=dict(text='캠페인 강도별 14일 혈액 보유량 시뮬레이션', font=dict(size=13, color='#333')),
+        xaxis=dict(showgrid=False, tickformat='%m/%d',
+                   range=[today - pd.Timedelta(hours=6),
+                          fc_dates.iloc[-1] + pd.Timedelta(days=1)]),
+        yaxis=dict(tickformat=',d', title='보유량 (unit)',
+                   showgrid=True, gridcolor='#f0f0f0'),
+        legend=dict(orientation='h', y=-0.22, x=0),
+        height=380, margin=dict(l=0, r=80, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        hovermode='x unified',
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────
+#  분석 2: 헌혈률 장기 추세 + 위기 시점 예측
+# ──────────────────────────────────────────────────────────────────
+@st.cache_data
+def load_yearly_donors():
+    return pd.read_csv(f'{PROCESSED}/yearly_donors.csv')
+
+def chart_donation_trend():
+    """헌혈률 10년 추세 및 선형 회귀 기반 미래 예측"""
+    import numpy as np
+    from scipy.stats import linregress
+
+    df   = load_yearly_donors()
+    yrs  = df['year'].values
+    rate = df['실제 국민 헌혈률 (%)'].values
+    tots = df['총 헌혈실적 (건)'].values
+
+    # 선형 회귀
+    slope, intercept, r_val, _, _ = linregress(yrs, rate)
+    proj_years = list(range(2015, 2041))
+    proj_rate  = [slope * y + intercept for y in proj_years]
+
+    # 위기 시점 (3.0% / 2.5% 도달)
+    crisis_pts = {}
+    for threshold in [3.0, 2.5, 2.0]:
+        yr = next((y for y, r in zip(proj_years, proj_rate) if r < threshold), None)
+        if yr:
+            crisis_pts[threshold] = yr
+
+    fig = go.Figure()
+
+    # 실제 헌혈 건수 (보조 y축, 막대)
+    fig.add_trace(go.Bar(
+        x=yrs, y=tots,
+        name='총 헌혈실적 (건)',
+        marker_color='rgba(100,181,246,0.5)',
+        yaxis='y2',
+        hovertemplate='%{x}년<br>헌혈실적: <b>%{y:,}건</b><extra></extra>'
+    ))
+
+    # 실제 헌혈률 (선)
+    fig.add_trace(go.Scatter(
+        x=yrs, y=rate,
+        name='실제 국민 헌혈률 (%)',
+        line=dict(color='#c62828', width=2.5),
+        mode='lines+markers',
+        marker=dict(size=7, color='#c62828', line=dict(color='white', width=2)),
+        hovertemplate='%{x}년<br>헌혈률: <b>%{y:.2f}%</b><extra></extra>'
+    ))
+
+    # 회귀선 + 예측 구간
+    fig.add_trace(go.Scatter(
+        x=proj_years, y=proj_rate,
+        name=f'추세선 (R²={r_val**2:.2f})',
+        line=dict(color='#ff6d00', width=1.8, dash='dash'),
+        hovertemplate='%{x}년 예측: <b>%{y:.2f}%</b><extra></extra>'
+    ))
+
+    # 현재 / 미래 구분선
+    fig.add_vline(x=2025.5, line_dash='dot', line_color='gray', line_width=1.2)
+    fig.add_annotation(x=2026, y=max(rate) * 0.97,
+                       text='← 실제  |  예측 →',
+                       showarrow=False, font=dict(size=9, color='gray'))
+
+    # 위기 임계선 + annotation
+    for threshold, color, label in [
+        (3.0, '#ff6d00', '주의선 3.0%'),
+        (2.5, '#d50000', '위기선 2.5%'),
+    ]:
+        fig.add_hline(y=threshold, line_dash='longdash', line_color=color, line_width=1.3,
+                      annotation_text=label, annotation_position='bottom right',
+                      annotation_font_size=9, annotation_font_color=color)
+        if threshold in crisis_pts:
+            fig.add_annotation(
+                x=crisis_pts[threshold], y=threshold,
+                text=f'⚠️ {crisis_pts[threshold]}년',
+                showarrow=True, arrowhead=2, arrowcolor=color,
+                font=dict(size=10, color=color), ay=-30
+            )
+
+    fig.update_layout(
+        title=dict(text='국민 헌혈률 장기 추세 및 위기 시점 예측 (2015–2040)',
+                   font=dict(size=13, color='#333')),
+        xaxis=dict(showgrid=False, dtick=2),
+        yaxis=dict(title='헌혈률 (%)', range=[2.0, 5.0],
+                   showgrid=True, gridcolor='#f0f0f0'),
+        yaxis2=dict(title='총 헌혈실적 (건)', overlaying='y', side='right',
+                    showgrid=False, tickformat=',d'),
+        legend=dict(orientation='h', y=-0.2),
+        height=400, margin=dict(l=0, r=60, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        hovermode='x unified',
+    )
+    return fig, crisis_pts
+
+
+# ──────────────────────────────────────────────────────────────────
+#  분석 3: 공급-수요 갭 분석
+# ──────────────────────────────────────────────────────────────────
+@st.cache_data
+def load_monthly_donation_cached():
+    return pd.read_csv(f'{PROCESSED}/monthly_donation.csv', parse_dates=['date'])
+
+def chart_supply_demand():
+    """월별 헌혈량(공급)과 RBC 보유량 변화(수요 초과 여부) 분석"""
+    import numpy as np
+
+    # RBC 월별 보유량
+    mbt = pd.read_csv(f'{PROCESSED}/monthly_inventory_by_type.csv', parse_dates=['date'])
+    rbc = mbt[mbt['component_code'] == 'RBC'][['date','inventory']].sort_values('date').reset_index(drop=True)
+    rbc['delta'] = rbc['inventory'].diff()   # 전월 대비 증감
+
+    # 월별 헌혈 (공급)
+    don = load_monthly_donation_cached().sort_values('date').reset_index(drop=True)
+
+    # 병합
+    merged = pd.merge(
+        rbc[['date','inventory','delta']],
+        don[['date','donation']],
+        on='date', how='inner'
+    ).dropna()
+
+    # 정규화 (헌혈 건수 → 0–100 스케일)
+    don_norm = (merged['donation'] - merged['donation'].min()) / \
+               (merged['donation'].max() - merged['donation'].min()) * 100
+    inv_norm = (merged['inventory'] - merged['inventory'].min()) / \
+               (merged['inventory'].max() - merged['inventory'].min()) * 100
+
+    fig = go.Figure()
+
+    # RBC 보유량 영역
+    fig.add_trace(go.Scatter(
+        x=merged['date'], y=merged['inventory'],
+        name='RBC 보유량 (unit)',
+        fill='tozeroy', fillcolor='rgba(198,40,40,0.1)',
+        line=dict(color='#c62828', width=1.5),
+        yaxis='y',
+        hovertemplate='%{x|%Y-%m}<br>보유량: <b>%{y:,} unit</b><extra></extra>'
+    ))
+
+    # 월별 헌혈 건수 (막대, 보조 y축)
+    colors_bar = ['#c62828' if d < 0 else '#43a047' for d in merged['delta']]
+    fig.add_trace(go.Bar(
+        x=merged['date'], y=merged['donation'],
+        name='월별 헌혈 건수',
+        marker_color='rgba(100,181,246,0.6)',
+        yaxis='y2',
+        hovertemplate='%{x|%Y-%m}<br>헌혈: <b>%{y:,}건</b><extra></extra>'
+    ))
+
+    # 보유량 감소 구간 (수요 > 공급) 하이라이트
+    crisis_months = merged[merged['delta'] < -3000]  # 한 달에 3,000 이상 감소
+    for _, row in crisis_months.iterrows():
+        fig.add_vrect(
+            x0=row['date'] - pd.Timedelta(days=15),
+            x1=row['date'] + pd.Timedelta(days=15),
+            fillcolor='rgba(198,40,40,0.07)',
+            layer='below', line_width=0,
+        )
+
+    # 월별 순증감 꺾은선 (delta)
+    fig.add_trace(go.Scatter(
+        x=merged['date'], y=merged['delta'],
+        name='월간 보유량 증감',
+        line=dict(color='#7b1fa2', width=1.5, dash='dot'),
+        yaxis='y',
+        hovertemplate='%{x|%Y-%m}<br>증감: <b>%{y:+,} unit</b><extra></extra>'
+    ))
+    fig.add_hline(y=0, line_dash='solid', line_color='#7b1fa2',
+                  line_width=0.8, yref='y')
+
+    fig.update_layout(
+        title=dict(text='월별 헌혈량(공급) vs RBC 보유량 변화 — 공급·수요 갭 분석',
+                   font=dict(size=13, color='#333')),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(title='RBC 보유량 / 증감 (unit)',
+                   showgrid=True, gridcolor='#f0f0f0'),
+        yaxis2=dict(title='월별 헌혈 건수', overlaying='y', side='right',
+                    showgrid=False, tickformat=',d'),
+        legend=dict(orientation='h', y=-0.2),
+        height=400, margin=dict(l=0, r=60, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        hovermode='x unified',
+        barmode='overlay',
+    )
+
+    # 요약 통계
+    surplus_months  = int((merged['delta'] > 0).sum())
+    deficit_months  = int((merged['delta'] < 0).sum())
+    worst_month_idx = merged['delta'].idxmin()
+    worst           = merged.loc[worst_month_idx]
+
+    return fig, surplus_months, deficit_months, worst
+
+
 # ══════════════════════════════════════════════════════════════════
 # 메인 UI
 # ══════════════════════════════════════════════════════════════════
@@ -716,6 +1007,68 @@ st.markdown(
 # 에이전트 로그 (collapsed)
 with st.expander("🤖 에이전트 실행 로그", expanded=False):
     st.markdown("\n".join(result.get('agent_logs', [])))
+
+# ── 심층 분석 섹션 ───────────────────────────────────────────────
+st.divider()
+st.markdown("## 🔬 심층 분석")
+
+tab_a, tab_b, tab_c = st.tabs([
+    "💉 캠페인 시뮬레이션",
+    "📉 헌혈률 장기 추세",
+    "⚖️ 공급-수요 갭",
+])
+
+with tab_a:
+    st.markdown("#### 헌혈 캠페인 강도별 14일 보유량 변화 시뮬레이션")
+    st.caption("캠페인으로 헌혈이 증가하면 14일 후 보유량이 얼마나 달라지는지 비교합니다.")
+    st.plotly_chart(chart_campaign_sim(result), use_container_width=True)
+
+    # D+14 비교 카드
+    rbc_days  = result.get('rbc_days', 0)
+    daily_need = result['current_inventory'] / rbc_days if rbc_days > 0 else 5052
+    fc_base_14 = pd.DataFrame(result['forecast_14d'])['forecast'].iloc[-1]
+    c1, c2, c3, c4 = st.columns(4)
+    for col, (label, rate) in zip(
+        [c1, c2, c3, c4],
+        [("기준 (현재)", 0.0), ("+5% SMS", 0.05), ("+10% SNS", 0.10), ("+15% 긴급", 0.15)]
+    ):
+        val = fc_base_14 + daily_need * rate * 14
+        days_val = round(val / daily_need, 1)
+        col.metric(label, f"{val:,.0f} unit", f"{days_val}일분")
+
+with tab_b:
+    st.markdown("#### 국민 헌혈률 장기 하락 추세와 구조적 위기 시점")
+    st.caption("선형 회귀로 현재 추세를 연장해 헌혈률이 위험 수준에 도달하는 시기를 예측합니다.")
+
+    try:
+        from scipy.stats import linregress as _lr
+        fig_trend, crisis_pts = chart_donation_trend()
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+        c1, c2, c3 = st.columns(3)
+        df_yr = load_yearly_donors()
+        c1.metric("2015년 헌혈률", f"{df_yr.iloc[0]['실제 국민 헌혈률 (%)']:.2f}%")
+        c2.metric("2025년 헌혈률", f"{df_yr.iloc[-1]['실제 국민 헌혈률 (%)']:.2f}%",
+                  f"{df_yr.iloc[-1]['실제 국민 헌혈률 (%)']-df_yr.iloc[0]['실제 국민 헌혈률 (%)']:+.2f}%p (10년)")
+        crisis_3 = crisis_pts.get(3.0)
+        c3.metric("3.0% 도달 예상", f"{crisis_3}년" if crisis_3 else "추세 내 없음",
+                  "⚠️ 구조적 위기")
+    except ImportError:
+        st.warning("scipy가 설치되지 않았습니다. `pip install scipy`를 실행해주세요.")
+
+with tab_c:
+    st.markdown("#### 월별 헌혈(공급) vs RBC 보유량 변화(수요 초과 여부)")
+    st.caption("보유량이 감소한 달(수요 > 공급)은 붉은 배경으로 표시됩니다.")
+
+    fig_gap, surplus, deficit, worst = chart_supply_demand()
+    st.plotly_chart(fig_gap, use_container_width=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("공급 > 수요 월 수", f"{surplus}개월", "보유량 증가")
+    c2.metric("수요 > 공급 월 수", f"{deficit}개월", "보유량 감소", delta_color="inverse")
+    c3.metric("최대 급감 월",
+              worst['date'].strftime('%Y년 %m월'),
+              f"{worst['delta']:+,.0f} unit")
 
 st.divider()
 if st.button("🔄 다시 실행"):
