@@ -424,133 +424,125 @@ def run_pipeline():
 # 차트 함수
 # ══════════════════════════════════════════════════════════════════
 def chart_forecast(result):
-    fc_df    = pd.DataFrame(result['forecast_14d'])
-    fc_dates = pd.to_datetime(fc_df['date'])
-    fc_vals  = fc_df['forecast'].values
-
+    """오늘 실측값 → 14일 예측 차트 (오늘부터만 표시)"""
+    fc_df      = pd.DataFrame(result['forecast_14d'])
+    fc_dates   = pd.to_datetime(fc_df['date'])
+    fc_vals    = fc_df['forecast'].values
     today      = pd.Timestamp.today().normalize()
     today_val  = result['current_inventory']
+    rbc_days   = result.get('rbc_days', 0)
+    daily_need = today_val / rbc_days if rbc_days > 0 else 5052
 
-    # 역사적 데이터에서 최근 30일치만 추출 (같은 연도 내 데이터)
-    daily  = load_daily_inventory()
-    ts_all = daily.set_index('date')['inventory'].sort_index()
-    cutoff = today - pd.Timedelta(days=30)
-    recent = ts_all[ts_all.index >= cutoff]
+    all_x = [today] + list(fc_dates)
+    all_y = [today_val] + list(fc_vals)
 
     fig = go.Figure()
 
-    # ── 최근 30일 역사 데이터 (있는 경우) ──────────────────────
-    if len(recent) > 0:
-        fig.add_trace(go.Scatter(
-            x=recent.index, y=recent.values,
-            name='실제 보유량 (최근 30일)',
-            line=dict(color='#1565c0', width=2.0),
-            hovertemplate='%{x|%Y-%m-%d}<br>%{y:,} unit<extra></extra>'
-        ))
-
-    # ── 오늘 스크래핑 값 (앵커 포인트) ──────────────────────────
-    fig.add_trace(go.Scatter(
-        x=[today], y=[today_val],
-        name=f'오늘 실측 ({today.strftime("%m/%d")})',
-        mode='markers',
-        marker=dict(color='#1565c0', size=10, symbol='circle',
-                    line=dict(color='white', width=2)),
-        hovertemplate=f'{today.strftime("%Y-%m-%d")}<br>{today_val:,} unit<extra></extra>'
-    ))
-
-    # ── 오늘 → 예측 연결선 ───────────────────────────────────────
-    connect_x = [today] + list(fc_dates)
-    connect_y = [today_val] + list(fc_vals)
-    fig.add_trace(go.Scatter(
-        x=connect_x, y=connect_y,
-        name='14일 예측',
-        line=dict(color='#c62828', width=2.2, dash='dash'),
-        mode='lines+markers',
-        marker=dict(size=5, color='#c62828'),
-        hovertemplate='%{x|%Y-%m-%d}<br>예측: %{y:,} unit<extra></extra>'
-    ))
-
-    # ── 신뢰구간 ────────────────────────────────────────────────
+    # 신뢰구간
     if 'lower_95' in fc_df.columns:
         fig.add_trace(go.Scatter(
             x=list(fc_dates) + list(fc_dates[::-1]),
             y=list(fc_df['upper_95']) + list(fc_df['lower_95'])[::-1],
-            fill='toself', fillcolor='rgba(198,40,40,0.10)',
-            line=dict(color='rgba(0,0,0,0)'),
-            name='95% 신뢰구간',
-            hoverinfo='skip'
+            fill='toself', fillcolor='rgba(198,40,40,0.12)',
+            line=dict(color='rgba(0,0,0,0)'), name='95% 신뢰구간',
+            hoverinfo='skip', showlegend=True,
         ))
 
-    # ── KRC 위험 임계선 ─────────────────────────────────────────
-    x_start = (recent.index[0] if len(recent) > 0 else today - pd.Timedelta(days=5))
-    x_end   = fc_dates.iloc[-1]
-    daily_need = today_val / result['rbc_days'] if result.get('rbc_days', 0) > 0 else 5052
+    # 예측 라인
+    fig.add_trace(go.Scatter(
+        x=all_x, y=all_y,
+        name='14일 예측',
+        line=dict(color='#c62828', width=2.5),
+        mode='lines+markers',
+        marker=dict(size=6, color='#c62828',
+                    line=dict(color='white', width=1.5)),
+        hovertemplate='%{x|%m/%d}<br><b>%{y:,} unit</b><extra></extra>'
+    ))
 
+    # 오늘 강조 마커
+    fig.add_trace(go.Scatter(
+        x=[today], y=[today_val],
+        name=f'오늘 실측',
+        mode='markers',
+        marker=dict(color='#1565c0', size=13, symbol='circle',
+                    line=dict(color='white', width=2.5)),
+        hovertemplate=f'오늘({today.strftime("%m/%d")})<br><b>{today_val:,} unit ({rbc_days}일분)</b><extra></extra>'
+    ))
+
+    # KRC 위험 임계선 (4단계)
+    x0, x1 = today - pd.Timedelta(hours=6), fc_dates.iloc[-1] + pd.Timedelta(hours=6)
     for label, days, color, dash in [
-        ('관심 (5일분)',  5, '#1565c0', 'dot'),
-        ('주의 (3일분)',  3, '#ffb300', 'dot'),
-        ('경계 (2일분)',  2, '#ff6d00', 'dash'),
-        ('심각 (1일분)',  1, '#d50000', 'longdash'),
+        ('관심 5일', 5, '#1565c0', 'dot'),
+        ('주의 3일', 3, '#ffb300', 'dot'),
+        ('경계 2일', 2, '#ff6d00', 'dash'),
+        ('심각 1일', 1, '#d50000', 'longdash'),
     ]:
-        threshold_val = days * daily_need
-        fig.add_shape(type='line', x0=x_start, x1=x_end,
-                      y0=threshold_val, y1=threshold_val,
-                      line=dict(color=color, width=1.2, dash=dash))
-        fig.add_annotation(x=x_end, y=threshold_val, text=label,
-                           showarrow=False, xanchor='right',
-                           font=dict(size=9, color=color), yshift=6)
-
-    # ── 예측 시작 구분선 ─────────────────────────────────────────
-    fig.add_vline(x=today, line_width=1.3, line_dash='dash', line_color='#555')
-    fig.add_annotation(
-        x=today, y=max(connect_y) * 1.04,
-        text='오늘 →', showarrow=False,
-        font=dict(size=10, color='#555'), xanchor='left'
-    )
-
-    # ── x축 범위: 30일 전 ~ 14일 후 ─────────────────────────────
-    x_min = today - pd.Timedelta(days=32)
-    x_max = fc_dates.iloc[-1] + pd.Timedelta(days=1)
+        v = days * daily_need
+        fig.add_shape(type='line', x0=x0, x1=x1, y0=v, y1=v,
+                      line=dict(color=color, width=1.3, dash=dash))
+        fig.add_annotation(x=x1, y=v, text=label, showarrow=False,
+                           xanchor='left', font=dict(size=9, color=color), xshift=4)
 
     fig.update_layout(
-        title=dict(text='혈액 보유량 14일 예측 (오늘 실측 기준)', font=dict(size=14)),
-        xaxis=dict(showgrid=False, range=[x_min, x_max]),
-        yaxis=dict(tickformat=',d', title='보유량 (unit)', rangemode='tozero'),
-        legend=dict(orientation='h', y=-0.22),
-        height=380,
-        margin=dict(l=10, r=10, t=45, b=10),
-        paper_bgcolor='white', plot_bgcolor='#fafafa',
+        title=dict(text=f'📅 오늘({today.strftime("%Y-%m-%d")}) 실측 기준  14일 예측',
+                   font=dict(size=13, color='#333')),
+        xaxis=dict(showgrid=False, tickformat='%m/%d',
+                   range=[today - pd.Timedelta(hours=12),
+                          fc_dates.iloc[-1] + pd.Timedelta(days=1)]),
+        yaxis=dict(tickformat=',d', title='보유량 (unit)', showgrid=True,
+                   gridcolor='#f0f0f0'),
+        legend=dict(orientation='h', y=-0.18, x=0),
+        height=340, margin=dict(l=0, r=80, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
         hovermode='x unified',
     )
     return fig
 
-def chart_components(result):
-    comp = result['component_risks']
-    names = list(comp.keys())
-    ratios= [v['ratio']*100 for v in comp.values()]
-    colors= [RISK_COLOR.get(v['level'],'#4caf50') for v in comp.values()]
-    labels= {'RBC':'농축적혈구','PLT':'농축혈소판','FFP':'신선동결혈장','SDP':'성분채혈혈소판'}
+def chart_blood_types(result):
+    """혈액형별 RBC 보유일수 차트 (스크래핑 실시간 데이터)"""
+    rbc_by_type  = result.get('rbc_by_type', {})
+    rbc_days_all = result.get('rbc_days', 0)
+    daily_need   = result['current_inventory'] / rbc_days_all if rbc_days_all > 0 else 5052
+
+    blood_types = ['A', 'B', 'O', 'AB']
+    # 혈액형별 1일 소요량 비율 (대략 A:B:O:AB = 34:26:28:12)
+    need_ratio  = {'A': 0.34, 'B': 0.26, 'O': 0.28, 'AB': 0.12}
+
+    days_vals = []
+    for bt in blood_types:
+        units     = rbc_by_type.get(bt, 0) or 0
+        bt_need   = daily_need * need_ratio.get(bt, 0.25)
+        days_val  = round(units / bt_need, 1) if bt_need > 0 else 0
+        days_vals.append(days_val)
+
+    bar_colors = [
+        '#d50000' if d < 1 else
+        '#ff6d00' if d < 2 else
+        '#ffb300' if d < 3 else
+        '#1565c0' if d < 5 else
+        '#43a047'
+        for d in days_vals
+    ]
 
     fig = go.Figure(go.Bar(
-        x=[labels.get(n,n) for n in names], y=ratios,
-        marker_color=colors, marker_line_color='white', marker_line_width=1.5,
-        text=[f'{v:.0f}%' for v in ratios], textposition='outside',
-        hovertemplate='%{x}<br>%{y:.1f}%<extra></extra>'
+        x=blood_types, y=days_vals,
+        marker_color=bar_colors, marker_line_color='white', marker_line_width=2,
+        text=[f'{d}일' for d in days_vals], textposition='outside',
+        hovertemplate='%{x}형<br><b>%{y}일분</b><extra></extra>'
     ))
-    for val, color, label in [
-        (100, '#9e9e9e', '역사 평균'),
-        (85,  '#ffb300', '혈소판 기준'),
-        (75,  '#ff6d00', '일반 기준'),
-    ]:
-        fig.add_hline(y=val, line_dash='dot', line_color=color, line_width=1.3,
+
+    for days, color, label in [(5,'#1565c0','관심'), (3,'#ffb300','주의'), (2,'#ff6d00','경계')]:
+        fig.add_hline(y=days, line_dash='dot', line_color=color, line_width=1.3,
                       annotation_text=label, annotation_position='top right',
-                      annotation_font_size=9)
+                      annotation_font_size=9, annotation_font_color=color)
+
     fig.update_layout(
-        title=dict(text='제제별 보유량 (역사 평균 대비 %)', font=dict(size=13)),
-        yaxis=dict(range=[0, 140], title='%'),
-        height=300,
-        margin=dict(l=10, r=10, t=40, b=10),
-        paper_bgcolor='white', plot_bgcolor='#fafafa',
+        title=dict(text='혈액형별 RBC 보유일수', font=dict(size=13, color='#333')),
+        yaxis=dict(range=[0, max(days_vals) * 1.3 if days_vals else 10],
+                   title='보유일수', showgrid=True, gridcolor='#f0f0f0'),
+        xaxis=dict(title='혈액형'),
+        height=340, margin=dict(l=0, r=40, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
         showlegend=False,
     )
     return fig
@@ -590,137 +582,102 @@ def chart_historical(n_years=3):
 # 메인 UI
 # ══════════════════════════════════════════════════════════════════
 
-# ── 사이드바 ─────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+# 사이드바
+# ══════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## 🩸 혈액 공급 운영 대시보드")
-    st.markdown("**UNIST OM Term Project**  \nTeam 2: 노우찬 · 손준영 · 민예지")
+    st.markdown("### 🩸 혈액 공급 운영 대시보드")
+    st.caption("UNIST OM Team 2 · 노우찬 · 손준영 · 민예지")
+    st.divider()
+    run_btn = st.button("▶ 분석 실행", type="primary", use_container_width=True)
     st.divider()
 
-    run_btn = st.button("▶ 에이전트 파이프라인 실행",
-                        type="primary", use_container_width=True)
-    st.caption("5개 에이전트가 순차 실행되어 보고서를 생성합니다.")
-    st.divider()
+    llm_status = "✅ gpt-4o-mini" if USE_LLM else "⚠️ Rule-based"
+    st.caption(f"LLM: {llm_status}  |  데이터: 📡 bloodinfo.net")
 
-    with st.expander("⚙️ 시스템 정보"):
-        llm_status = "✅ gpt-4o-mini (OpenAI)" if USE_LLM else "⚠️ Rule-based (API 키 없음)"
-        st.markdown(f"**LLM**: {llm_status}")
-        st.markdown("**모델**: Holt-Winters (MAPE 10.6%)")
-        st.markdown("**임계값**")
-        st.markdown(f"- 🟢 정상: ≥ 20,000 unit")
-        st.markdown(f"- 🟡 주의: ≥ 15,000 unit")
-        st.markdown(f"- 🟠 경고: ≥ 10,000 unit")
-        st.markdown(f"- 🔴 위기: < 10,000 unit")
+    with st.expander("KRC 위험 단계 기준"):
+        st.markdown("| 단계 | 적혈구 보유일수 |\n|------|----------------|\n| 🟢 정상 | 5일 이상 |\n| 🔵 관심 | 3~5일 |\n| 🟡 주의 | 2~3일 |\n| 🟠 경계 | 1~2일 |\n| 🔴 심각 | 1일 미만 |")
 
-    with st.expander("📊 에이전트 구조"):
-        st.markdown("""
-```
-START
- → 🔵 Sensing Agent
- → 🟡 Forecasting Agent
- → 🟠 Risk Agent
-    ├─[CAUTION+]→ 🔴 Action Agent
-    └─[NORMAL] ─┐
- → 📄 Report Agent
-END
-```""")
+    with st.expander("에이전트 파이프라인"):
+        st.markdown("🔵 Sensing → 🟡 Forecasting → 🟠 Risk → 🔴 Action → 📄 Report")
 
-# ── 메인 ─────────────────────────────────────────────────────────
-st.markdown("# 🩸 혈액 공급 운영 대시보드")
-st.caption("혈액 부족 예측 및 헌혈 운영 최적화 — AI Multi-Agent System")
-st.divider()
+# ══════════════════════════════════════════════════════════════════
+# 메인 UI
+# ══════════════════════════════════════════════════════════════════
+st.markdown("## 🩸 혈액 공급 운영 대시보드")
+st.caption("대한적십자사 혈액정보 실시간 연동 · AI 멀티에이전트 예측 시스템")
 
-# 실행 버튼 처리
+# 실행
 if run_btn:
-    with st.status("🩸 에이전트 파이프라인 실행 중...", expanded=True) as status:
-        st.write("🔵 Sensing Agent — 데이터 수집 중...")
-        time.sleep(0.3)
-        st.write("🟡 Forecasting Agent — 예측 로드 중...")
-        time.sleep(0.3)
-        st.write("🟠 Risk Agent — 위험 점수 산출 중...")
-        time.sleep(0.3)
-        st.write("🔴 Action Agent — 대응 방안 결정 중...")
-        time.sleep(0.3)
-        st.write("📄 Report Agent — 보고서 생성 중...")
+    with st.status("에이전트 실행 중...", expanded=True) as status:
+        for msg in ["🔵 Sensing — bloodinfo.net 스크래핑",
+                    "🟡 Forecasting — 14일 예측 생성",
+                    "🟠 Risk — KRC 위험 등급 판정",
+                    "🔴 Action — 대응 방안 결정",
+                    "📄 Report — 운영 보고서 작성"]:
+            st.write(msg); time.sleep(0.25)
         result = run_pipeline()
-        status.update(label="✅ 파이프라인 완료!", state="complete", expanded=False)
+        status.update(label="✅ 분석 완료", state="complete", expanded=False)
     st.session_state['result'] = result
     st.rerun()
 
-# 결과 표시
+# ── 결과 없을 때 초기 화면 ───────────────────────────────────────
 if 'result' not in st.session_state:
-    # 초기 화면
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info("**Step 1**: 왼쪽 사이드바에서\n'에이전트 파이프라인 실행' 클릭")
-    with col2:
-        st.info("**Step 2**: 5개 에이전트가 순차 실행되며\n혈액 현황을 분석합니다")
-    with col3:
-        st.info("**Step 3**: 14일 예측, 위험 등급,\n헌혈 캠페인 권고안이 생성됩니다")
-
-    st.markdown("---")
-    st.subheader("📈 역사적 혈액 보유량 추이 (사전 탐색)")
+    st.info("← 왼쪽 **분석 실행** 버튼을 눌러 에이전트를 시작하세요.", icon="👈")
     st.plotly_chart(chart_historical(3), use_container_width=True)
+    st.stop()
 
-else:
-    result = st.session_state['result']
-    risk   = result['risk_level']
+# ── 결과 대시보드 ────────────────────────────────────────────────
+result = st.session_state['result']
+risk   = result['risk_level']
+src    = "📡 실시간" if result.get('scrape_success') else "📂 CSV"
+min_days = min((r['days'] for r in result['forecast_14d']), default=0)
 
-    # ── KPI 카드 ─────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        src = "📡 실시간" if result.get('scrape_success') else "📂 CSV"
-        st.metric("🩸 현재 보유량",
-                  f"{result['current_inventory']:,} unit",
-                  f"{result['rbc_days']}일분  ({src})")
-    with c2:
-        st.metric(f"{RISK_EMOJI.get(risk,'❓')} 위험 등급",
-                  risk,
-                  f"점수 {result['risk_score']}/100")
-    with c3:
-        min_days = min((r['days'] for r in result['forecast_14d']), default=0)
-        st.metric("📉 14일 예측 최저",
-                  f"{min_days}일분",
-                  result['forecast_min_date'])
-    with c4:
-        lvl = result.get('intervention_level', 'NONE')
-        st.metric("📢 권고 대응",
-                  lvl,
-                  result['current_season'])
+# KPI 카드 4개
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.metric("🩸 현재 보유량",
+              f"{result['current_inventory']:,} unit",
+              f"{result['rbc_days']}일분  {src}")
+with c2:
+    st.metric(f"{RISK_EMOJI.get(risk,'❓')} 위험 등급",
+              risk, f"점수 {result['risk_score']}/100")
+with c3:
+    st.metric("📉 14일 예측 최저",
+              f"{min_days}일분", result['forecast_min_date'])
+with c4:
+    st.metric("📢 권고 대응",
+              result.get('intervention_level', 'NONE'),
+              result['current_season'])
 
-    st.markdown(f"*{result['historical_context']}  |  기준일: {result['last_data_date']}*")
-    st.divider()
+st.caption(f"{result['historical_context']}  ·  기준: {result['last_data_date']}")
+st.divider()
 
-    # ── 메인 차트 ────────────────────────────────────────────────
-    col_left, col_right = st.columns([2, 1])
-    with col_left:
-        st.plotly_chart(chart_forecast(result), use_container_width=True)
-    with col_right:
-        st.plotly_chart(chart_components(result), use_container_width=True)
+# 메인 차트 2열
+col_l, col_r = st.columns([3, 2])
+with col_l:
+    st.plotly_chart(chart_forecast(result), use_container_width=True)
+with col_r:
+    st.plotly_chart(chart_blood_types(result), use_container_width=True)
 
-    # ── 에이전트 로그 + 역사 비교 ─────────────────────────────────
-    col_log, col_hist = st.columns([1, 1])
-    with col_log:
-        with st.expander("🤖 에이전트 실행 로그", expanded=True):
-            log_text = "\n".join(result.get('agent_logs', []))
-            st.markdown(log_text)
-    with col_hist:
-        st.plotly_chart(chart_historical(3), use_container_width=True)
+st.divider()
 
-    # ── 최종 보고서 ───────────────────────────────────────────────
-    st.divider()
-    st.subheader("📄 운영 보고서")
-    report_text = result.get('final_report', '')
-    bg = RISK_BG.get(risk, '#f8f9fa')
-    border = RISK_COLOR.get(risk, '#c62828')
-    st.markdown(
-        f'<div class="report-box" style="border-left-color:{border};background:{bg};">'
-        f'{report_text}'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+# 운영 보고서 (풀 width)
+bg     = RISK_BG.get(risk, '#f8f9fa')
+border = RISK_COLOR.get(risk, '#c62828')
+st.markdown("**📄 운영 보고서**")
+st.markdown(
+    f'<div class="report-box" style="border-left-color:{border};background:{bg};">'
+    f'{result.get("final_report","")}'
+    f'</div>',
+    unsafe_allow_html=True
+)
 
-    # ── 재실행 버튼 ───────────────────────────────────────────────
-    st.divider()
-    if st.button("🔄 다시 실행", use_container_width=False):
-        del st.session_state['result']
-        st.rerun()
+# 에이전트 로그 (collapsed)
+with st.expander("🤖 에이전트 실행 로그", expanded=False):
+    st.markdown("\n".join(result.get('agent_logs', [])))
+
+st.divider()
+if st.button("🔄 다시 실행"):
+    del st.session_state['result']
+    st.rerun()
