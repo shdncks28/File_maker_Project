@@ -491,9 +491,8 @@ def chart_forecast(result):
                           fc_dates.iloc[-1] + pd.Timedelta(days=1)]),
         yaxis=dict(tickformat=',d', title='보유량 (unit)', showgrid=True,
                    gridcolor='#f0f0f0'),
-        legend=dict(orientation='h', y=0.99, x=0, yanchor='top', font=dict(size=9),
-                    bgcolor='rgba(255,255,255,0.7)'),
-        height=320, margin=dict(l=0, r=80, t=40, b=10),
+        legend=dict(orientation='h', y=-0.18, x=0),
+        height=340, margin=dict(l=0, r=80, t=45, b=0),
         paper_bgcolor='white', plot_bgcolor='white',
         hovermode='x unified',
     )
@@ -528,7 +527,7 @@ def chart_components(result):
         title=dict(text='제제별 보유량 (역사 평균 대비 %)', font=dict(size=13, color='#333')),
         yaxis=dict(range=[0, max(ratios) * 1.25 if ratios else 140], title='%',
                    showgrid=True, gridcolor='#f0f0f0'),
-        height=320, margin=dict(l=0, r=60, t=40, b=10),
+        height=340, margin=dict(l=0, r=60, t=45, b=0),
         paper_bgcolor='white', plot_bgcolor='white',
         showlegend=False,
     )
@@ -578,7 +577,7 @@ def chart_blood_types(result):
         yaxis=dict(range=[0, max(days_vals) * 1.3 if days_vals else 10],
                    title='보유일수', showgrid=True, gridcolor='#f0f0f0'),
         xaxis=dict(title='혈액형'),
-        height=320, margin=dict(l=0, r=60, t=40, b=10),
+        height=340, margin=dict(l=0, r=60, t=45, b=0),
         paper_bgcolor='white', plot_bgcolor='white',
         showlegend=False,
     )
