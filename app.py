@@ -21,6 +21,102 @@ load_dotenv()
 BASE      = os.path.dirname(os.path.abspath(__file__))
 PROCESSED = os.path.join(BASE, 'processed')
 
+# ══════════════════════════════════════════════════════════════════
+# 다국어 텍스트 사전 (한국어 / English)
+# ══════════════════════════════════════════════════════════════════
+TEXT = {
+    '한국어': {
+        'page_title':        '혈액 공급 운영 대시보드',
+        'subtitle':          '대한적십자사 혈액정보 실시간 연동 · AI 멀티에이전트 예측 시스템',
+        'run_btn':           '▶ 분석 실행',
+        'refresh_btn':       '🔄 다시 실행',
+        'lang_label':        '🌐 언어',
+        # KPI
+        'kpi_stock':         '🩸 현재 보유량',
+        'kpi_risk':          '위험 등급',
+        'kpi_min':           '14일 예측 최저',
+        'kpi_action':        '📢 권고 대응',
+        # 탭
+        'tab_total_fc':      '📅 14일 예측 (전체)',
+        'tab_comp_fc':       '🔬 제제별 예측',
+        'tab_blood_type':    '🩸 혈액형별 보유일수',
+        'tab_comp_stock':    '📊 제제별 보유량',
+        # 심층 분석
+        'analysis_title':    '🔬 심층 분석',
+        'tab_campaign':      '💉 캠페인 시뮬레이션',
+        'tab_trend':         '📉 헌혈률 장기 추세',
+        'tab_gap':           '⚖️ 공급-수요 갭',
+        # 보고서/로그
+        'report_title':      '📄 운영 보고서',
+        'log_title':         '🤖 에이전트 실행 로그',
+        # 차트 제목
+        'chart_total_fc':    '오늘({date}) 실측 기준  14일 예측',
+        'chart_comp_fc':     '제제별 보유량 예측 (2개월)',
+        'chart_blood_days':  '혈액형별 RBC 보유일수',
+        'chart_comp_stock':  '제제별 보유량 (역사 평균 대비 %)',
+        # 제제명
+        'comp': {'RBC':'농축적혈구','PLT':'농축혈소판','FFP':'신선동결혈장','SDP':'성분채혈혈소판'},
+        # 사이드바
+        'sidebar_title':     '🩸 혈액 공급 운영 대시보드',
+        'sidebar_caption':   'UNIST OM Team 2',
+        'sidebar_krc':       'KRC 위험 단계 기준',
+        'sidebar_pipeline':  '에이전트 파이프라인',
+        'krc_table':         '| 단계 | 기준 |\n|---|---|\n| 🟢 정상 | 5일 이상 |\n| 🔵 관심 | 3~5일 |\n| 🟡 주의 | 2~3일 |\n| 🟠 경계 | 1~2일 |\n| 🔴 심각 | 1일 미만 |',
+        # 스크래핑 출처
+        'src_live':          '📡 실시간',
+        'src_csv':           '📂 CSV',
+        # 기타
+        'today_actual':      '오늘 실측',
+        'forecast_label':    '예측',
+        'no_result':         '← 왼쪽 **분석 실행** 버튼을 눌러 에이전트를 시작하세요.',
+    },
+    'English': {
+        'page_title':        'Blood Supply Operations Dashboard',
+        'subtitle':          'Real-time KRC Data · AI Multi-Agent Forecast System',
+        'run_btn':           '▶ Run Analysis',
+        'refresh_btn':       '🔄 Rerun',
+        'lang_label':        '🌐 Language',
+        # KPI
+        'kpi_stock':         '🩸 Current Stock',
+        'kpi_risk':          'Risk Level',
+        'kpi_min':           '14-Day Min Forecast',
+        'kpi_action':        '📢 Recommended Action',
+        # Tabs
+        'tab_total_fc':      '📅 14-Day Forecast (Total)',
+        'tab_comp_fc':       '🔬 By Component',
+        'tab_blood_type':    '🩸 Days by Blood Type',
+        'tab_comp_stock':    '📊 Component Stock',
+        # Deep analysis
+        'analysis_title':    '🔬 Deep Analysis',
+        'tab_campaign':      '💉 Campaign Simulation',
+        'tab_trend':         '📉 Donation Rate Trend',
+        'tab_gap':           '⚖️ Supply-Demand Gap',
+        # Report/Log
+        'report_title':      '📄 Operations Report',
+        'log_title':         '🤖 Agent Execution Log',
+        # Chart titles
+        'chart_total_fc':    'Today ({date}) · 14-Day Forecast',
+        'chart_comp_fc':     'Component-wise Forecast (2 Months)',
+        'chart_blood_days':  'RBC Days by Blood Type',
+        'chart_comp_stock':  'Component Stock (% of Historical Avg)',
+        # Component names
+        'comp': {'RBC':'Red Blood Cells','PLT':'Platelets','FFP':'Fresh Frozen Plasma','SDP':'Apheresis Platelets'},
+        # Sidebar
+        'sidebar_title':     '🩸 Blood Supply Dashboard',
+        'sidebar_caption':   'UNIST OM Team 2',
+        'sidebar_krc':       'KRC Risk Levels',
+        'sidebar_pipeline':  'Agent Pipeline',
+        'krc_table':         '| Level | Threshold |\n|---|---|\n| 🟢 Normal | ≥ 5 days |\n| 🔵 Watch | 3–5 days |\n| 🟡 Caution | 2–3 days |\n| 🟠 Warning | 1–2 days |\n| 🔴 Critical | < 1 day |',
+        # Scraping source
+        'src_live':          '📡 Live',
+        'src_csv':           '📂 CSV',
+        # Others
+        'today_actual':      'Today (Live)',
+        'forecast_label':    'Forecast',
+        'no_result':         '← Click **Run Analysis** in the sidebar to start.',
+    },
+}
+
 # ── 페이지 설정 ───────────────────────────────────────────────────
 st.set_page_config(
     page_title="혈액 공급 운영 대시보드",
@@ -134,6 +230,7 @@ class BloodAgentState(TypedDict):
     rbc_days: float          # 적혈구 보유일수 (KRC 기준)
     rbc_by_type: dict        # 혈액형별 RBC 보유량
     plt_rate: float          # 혈소판 보유율 (%)
+    plt_total_units: float   # 혈소판 현재 보유 수 (개)
     scrape_success: bool     # 스크래핑 성공 여부
     forecast_14d: list; forecast_min_value: int; forecast_min_date: str
     shortage_probability: float; days_until_warning: int
@@ -153,7 +250,8 @@ def sensing_agent(state):
         cur       = int(live['rbc']['total_units'])
         rbc_days  = live['rbc']['total_days']
         rbc_by_type = live['rbc']['units_by_type']
-        plt_rate  = live['plt']['total_rate']
+        plt_rate        = live['plt']['total_rate']
+        plt_total_units = live['plt'].get('total_units', 0) or 0
         last_date = live['date']
         scrape_ok = True
         logs.append(f"  → 스크래핑 성공: **{cur:,} unit** ({last_date})")
@@ -166,8 +264,9 @@ def sensing_agent(state):
         cur = int(ts.iloc[-1])
         last_date = ts.index.max().strftime('%Y-%m-%d')
         # 보유일수 추정: 역사적 1일 소요량 평균으로 계산
-        daily_need_avg = 5052  # 역사적 평균 1일 소요량
-        rbc_days = round(cur / daily_need_avg, 1)
+        daily_need_avg  = 5052  # 역사적 평균 1일 소요량
+        rbc_days        = round(cur / daily_need_avg, 1)
+        plt_total_units = 0.0
 
     # ── 7일 추세 (역사적 CSV 기반) ────────────────────────────────
     df = load_daily_inventory()
@@ -194,6 +293,7 @@ def sensing_agent(state):
         'rbc_days':           rbc_days,
         'rbc_by_type':        rbc_by_type,
         'plt_rate':           plt_rate,
+        'plt_total_units':    plt_total_units,
         'scrape_success':     scrape_ok,
         'agent_logs':         logs,
     }
@@ -403,6 +503,7 @@ def run_pipeline():
         'rbc_days':            0.0,
         'rbc_by_type':         {},
         'plt_rate':            0.0,
+        'plt_total_units':     0.0,
         'scrape_success':      False,
         'forecast_14d':        [],
         'forecast_min_value':  0,
@@ -612,6 +713,97 @@ def chart_historical(n_years=3):
         paper_bgcolor='white', plot_bgcolor='#fafafa',
         hovermode='x unified',
     )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────
+#  제제별 예측 (RBC / PLT / FFP / SDP)
+# ──────────────────────────────────────────────────────────────────
+def chart_component_forecast(result, lang='한국어'):
+    """4개 제제 각각 Holt-Winters 예측 — 2x2 서브플롯"""
+    from plotly.subplots import make_subplots
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+    T       = TEXT[lang]
+    mbt     = pd.read_csv(f'{PROCESSED}/monthly_inventory_by_type.csv', parse_dates=['date'])
+    today   = pd.Timestamp.today().normalize()
+
+    COMPS   = ['RBC', 'PLT', 'FFP', 'SDP']
+    COLORS  = {'RBC':'#c62828','PLT':'#1565c0','FFP':'#2e7d32','SDP':'#6a1b9a'}
+
+    # 오늘 실측 앵커 (스크래핑 데이터)
+    anchors = {
+        'RBC': result.get('current_inventory') or None,
+        'PLT': result.get('plt_total_units')  or None,
+    }
+
+    subtitles = [T['comp'][c] for c in COMPS]
+    fig = make_subplots(rows=2, cols=2, subplot_titles=subtitles,
+                        vertical_spacing=0.18, horizontal_spacing=0.10)
+
+    for i, comp in enumerate(COMPS):
+        row, col = divmod(i, 2)
+        row, col = row + 1, col + 1
+
+        ts = (mbt[mbt['component_code'] == comp]
+              .sort_values('date').set_index('date')['inventory'])
+        hist = ts.iloc[-12:]   # 최근 12개월 실제 데이터
+
+        # Holt-Winters 학습 및 8개월 예측 (Dec 2025 → Aug 2026)
+        hw = ExponentialSmoothing(
+            ts, trend='add', seasonal='add',
+            seasonal_periods=12, initialization_method='estimated'
+        ).fit(optimized=True)
+        fc = hw.forecast(8)
+
+        # 앵커 조정: 오늘 실측값이 있으면 해당 월 예측을 실측으로 보정
+        if comp in anchors and anchors[comp]:
+            fc_today = fc[fc.index.month == today.month]
+            if len(fc_today) > 0:
+                adj = anchors[comp] - fc_today.iloc[0]
+                fc  = fc + adj
+
+        # 역사 라인
+        fig.add_trace(go.Scatter(
+            x=hist.index, y=hist.values, name=T['comp'][comp],
+            line=dict(color=COLORS[comp], width=1.8), showlegend=False,
+            hovertemplate='%{x|%Y-%m}: <b>%{y:,}</b><extra>' + T['comp'][comp] + '</extra>',
+        ), row=row, col=col)
+
+        # 예측 라인 (점선)
+        fig.add_trace(go.Scatter(
+            x=fc.index, y=fc.values,
+            name=T['comp'][comp] + f' ({T["forecast_label"]})',
+            line=dict(color=COLORS[comp], width=2, dash='dash'),
+            mode='lines+markers', marker=dict(size=5), showlegend=False,
+            hovertemplate=T['forecast_label'] + ' %{x|%Y-%m}: <b>%{y:,}</b><extra></extra>',
+        ), row=row, col=col)
+
+        # 오늘 실측 마커
+        if comp in anchors and anchors[comp]:
+            fig.add_trace(go.Scatter(
+                x=[today], y=[anchors[comp]],
+                mode='markers',
+                marker=dict(color=COLORS[comp], size=11, symbol='star',
+                            line=dict(color='white', width=1.5)),
+                name=T['today_actual'], showlegend=(i == 0),
+                hovertemplate=T['today_actual'] + ': <b>%{y:,}</b><extra></extra>',
+            ), row=row, col=col)
+
+        # 오늘 구분선
+        fig.add_vline(x=today, line_dash='dot', line_color='gray',
+                      line_width=1.0, row=row, col=col)
+
+    fig.update_layout(
+        title=dict(text=T['chart_comp_fc'], font=dict(size=13, color='#333')),
+        height=460, margin=dict(l=0, r=10, t=65, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        legend=dict(orientation='h', y=-0.05),
+        hovermode='x unified',
+    )
+    for ann in fig['layout']['annotations']:
+        ann['font'] = dict(size=11, color='#333')
+
     return fig
 
 
@@ -906,88 +1098,104 @@ def chart_supply_demand():
 
 
 # ══════════════════════════════════════════════════════════════════
-# 메인 UI
+# 언어 초기화 (세션 유지)
 # ══════════════════════════════════════════════════════════════════
+if 'lang' not in st.session_state:
+    st.session_state['lang'] = '한국어'
 
 # ══════════════════════════════════════════════════════════════════
 # 사이드바
 # ══════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### 🩸 혈액 공급 운영 대시보드")
-    st.caption("UNIST OM Team 2 · 노우찬 · 손준영 · 민예지")
+    # 언어 토글 (최상단)
+    lang = st.radio(
+        TEXT['한국어']['lang_label'],
+        options=['한국어', 'English'],
+        index=0 if st.session_state['lang'] == '한국어' else 1,
+        horizontal=True,
+    )
+    if lang != st.session_state['lang']:
+        st.session_state['lang'] = lang
+        st.rerun()
+
+    T = TEXT[lang]   # 현재 언어 텍스트 단축 참조
+
+    st.markdown(f"### {T['sidebar_title']}")
+    st.caption(f"{T['sidebar_caption']} · 노우찬 · 손준영 · 민예지")
     st.divider()
-    run_btn = st.button("▶ 분석 실행", type="primary", use_container_width=True)
+    run_btn = st.button(T['run_btn'], type="primary", use_container_width=True)
     st.divider()
 
     llm_status = "✅ gpt-4o-mini" if USE_LLM else "⚠️ Rule-based"
-    st.caption(f"LLM: {llm_status}  |  데이터: 📡 bloodinfo.net")
+    st.caption(f"LLM: {llm_status}  |  📡 bloodinfo.net")
 
-    with st.expander("KRC 위험 단계 기준"):
-        st.markdown("| 단계 | 적혈구 보유일수 |\n|------|----------------|\n| 🟢 정상 | 5일 이상 |\n| 🔵 관심 | 3~5일 |\n| 🟡 주의 | 2~3일 |\n| 🟠 경계 | 1~2일 |\n| 🔴 심각 | 1일 미만 |")
+    with st.expander(T['sidebar_krc']):
+        st.markdown(T['krc_table'])
 
-    with st.expander("에이전트 파이프라인"):
+    with st.expander(T['sidebar_pipeline']):
         st.markdown("🔵 Sensing → 🟡 Forecasting → 🟠 Risk → 🔴 Action → 📄 Report")
 
 # ══════════════════════════════════════════════════════════════════
 # 메인 UI
 # ══════════════════════════════════════════════════════════════════
-st.markdown("## 🩸 혈액 공급 운영 대시보드")
-st.caption("대한적십자사 혈액정보 실시간 연동 · AI 멀티에이전트 예측 시스템")
+T = TEXT[st.session_state['lang']]   # 최신 언어 반영
+
+st.markdown(f"## 🩸 {T['page_title']}")
+st.caption(T['subtitle'])
 
 # 실행
 if run_btn:
-    with st.status("에이전트 실행 중...", expanded=True) as status:
-        for msg in ["🔵 Sensing — bloodinfo.net 스크래핑",
-                    "🟡 Forecasting — 14일 예측 생성",
-                    "🟠 Risk — KRC 위험 등급 판정",
-                    "🔴 Action — 대응 방안 결정",
-                    "📄 Report — 운영 보고서 작성"]:
+    with st.status("...", expanded=True) as status:
+        for msg in ["🔵 Sensing — bloodinfo.net",
+                    "🟡 Forecasting", "🟠 Risk", "🔴 Action", "📄 Report"]:
             st.write(msg); time.sleep(0.25)
         result = run_pipeline()
-        status.update(label="✅ 분석 완료", state="complete", expanded=False)
+        status.update(label="✅", state="complete", expanded=False)
     st.session_state['result'] = result
     st.rerun()
 
-# ── 결과 없을 때 초기 화면 ───────────────────────────────────────
+# 결과 없을 때
 if 'result' not in st.session_state:
-    st.info("← 왼쪽 **분석 실행** 버튼을 눌러 에이전트를 시작하세요.", icon="👈")
+    st.info(T['no_result'], icon="👈")
     st.plotly_chart(chart_historical(3), use_container_width=True)
     st.stop()
 
 # ── 결과 대시보드 ────────────────────────────────────────────────
-result = st.session_state['result']
-risk   = result['risk_level']
-src    = "📡 실시간" if result.get('scrape_success') else "📂 CSV"
+result   = st.session_state['result']
+risk     = result['risk_level']
+src      = T['src_live'] if result.get('scrape_success') else T['src_csv']
 min_days = min((r['days'] for r in result['forecast_14d']), default=0)
 
-# KPI 카드 4개
+# KPI 카드
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    st.metric("🩸 현재 보유량",
+    st.metric(T['kpi_stock'],
               f"{result['current_inventory']:,} unit",
-              f"{result['rbc_days']}일분  {src}")
+              f"{result['rbc_days']}{'일분' if lang=='한국어' else 'd'}  {src}")
 with c2:
-    st.metric(f"{RISK_EMOJI.get(risk,'❓')} 위험 등급",
-              risk, f"점수 {result['risk_score']}/100")
+    st.metric(f"{RISK_EMOJI.get(risk,'❓')} {T['kpi_risk']}",
+              risk, f"{'점수' if lang=='한국어' else 'Score'} {result['risk_score']}/100")
 with c3:
-    st.metric("📉 14일 예측 최저",
-              f"{min_days}일분", result['forecast_min_date'])
+    st.metric(T['kpi_min'],
+              f"{min_days}{'일분' if lang=='한국어' else 'd'}", result['forecast_min_date'])
 with c4:
-    st.metric("📢 권고 대응",
+    st.metric(T['kpi_action'],
               result.get('intervention_level', 'NONE'),
               result['current_season'])
 
-st.caption(f"{result['historical_context']}  ·  기준: {result['last_data_date']}")
+st.caption(f"{result['historical_context']}  ·  {result['last_data_date']}")
 st.divider()
 
 # 메인 차트 2열
 col_l, col_r = st.columns([3, 2])
 with col_l:
-    tab_fc, = st.tabs(["📅 14일 예측"])
+    tab_fc, tab_comp = st.tabs([T['tab_total_fc'], T['tab_comp_fc']])
     with tab_fc:
         st.plotly_chart(chart_forecast(result), use_container_width=True)
+    with tab_comp:
+        st.plotly_chart(chart_component_forecast(result, lang), use_container_width=True)
 with col_r:
-    tab1, tab2 = st.tabs(["🩸 혈액형별 보유일수", "📊 제제별 보유량"])
+    tab1, tab2 = st.tabs([T['tab_blood_type'], T['tab_comp_stock']])
     with tab1:
         st.plotly_chart(chart_blood_types(result), use_container_width=True)
     with tab2:
@@ -995,10 +1203,10 @@ with col_r:
 
 st.divider()
 
-# 운영 보고서 (풀 width)
+# 운영 보고서
 bg     = RISK_BG.get(risk, '#f8f9fa')
 border = RISK_COLOR.get(risk, '#c62828')
-st.markdown("**📄 운영 보고서**")
+st.markdown(f"**{T['report_title']}**")
 st.markdown(
     f'<div class="report-box" style="border-left-color:{border};background:{bg};">'
     f'{result.get("final_report","")}'
@@ -1006,19 +1214,15 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# 에이전트 로그 (collapsed)
-with st.expander("🤖 에이전트 실행 로그", expanded=False):
+# 에이전트 로그
+with st.expander(T['log_title'], expanded=False):
     st.markdown("\n".join(result.get('agent_logs', [])))
 
-# ── 심층 분석 섹션 ───────────────────────────────────────────────
+# 심층 분석
 st.divider()
-st.markdown("## 🔬 심층 분석")
+st.markdown(f"## {T['analysis_title']}")
 
-tab_a, tab_b, tab_c = st.tabs([
-    "💉 캠페인 시뮬레이션",
-    "📉 헌혈률 장기 추세",
-    "⚖️ 공급-수요 갭",
-])
+tab_a, tab_b, tab_c = st.tabs([T['tab_campaign'], T['tab_trend'], T['tab_gap']])
 
 with tab_a:
     st.markdown("#### 헌혈 캠페인 강도별 14일 보유량 변화 시뮬레이션")
@@ -1073,6 +1277,6 @@ with tab_c:
               f"{worst['delta']:+,.0f} unit")
 
 st.divider()
-if st.button("🔄 다시 실행"):
+if st.button(T['refresh_btn']):
     del st.session_state['result']
     st.rerun()
