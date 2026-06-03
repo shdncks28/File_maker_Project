@@ -32,12 +32,12 @@ TEXT = {
         'refresh_btn':       '🔄 다시 실행',
         'lang_label':        '🌐 언어',
         # KPI
-        'kpi_stock':         '🩸 현재 보유량',
+        'kpi_stock':         '🩸 농축적혈구 보유량',
         'kpi_risk':          '위험 등급',
         'kpi_min':           '14일 예측 최저',
         'kpi_action':        '📢 권고 대응',
         # 탭
-        'tab_total_fc':      '📅 14일 예측 (전체)',
+        'tab_total_fc':      '📅 14일 예측 (농축적혈구)',
         'tab_comp_fc':       '🔬 제제별 예측',
         'tab_blood_type':    '🩸 혈액형별 보유일수',
         'tab_comp_stock':    '📊 제제별 보유량',
@@ -50,7 +50,7 @@ TEXT = {
         'report_title':      '📄 운영 보고서',
         'log_title':         '🤖 에이전트 실행 로그',
         # 차트 제목
-        'chart_total_fc':    '오늘({date}) 실측 기준  14일 예측',
+        'chart_total_fc':    '농축적혈구(RBC) 14일 예측 — 오늘({date}) 실측 기준',
         'chart_comp_fc':     '제제별 보유량 예측 (2개월)',
         'chart_blood_days':  '혈액형별 RBC 보유일수',
         'chart_comp_stock':  '제제별 보유량 (역사 평균 대비 %)',
@@ -77,12 +77,12 @@ TEXT = {
         'refresh_btn':       '🔄 Rerun',
         'lang_label':        '🌐 Language',
         # KPI
-        'kpi_stock':         '🩸 Current Stock',
+        'kpi_stock':         '🩸 RBC Stock',
         'kpi_risk':          'Risk Level',
         'kpi_min':           '14-Day Min Forecast',
         'kpi_action':        '📢 Recommended Action',
         # Tabs
-        'tab_total_fc':      '📅 14-Day Forecast (Total)',
+        'tab_total_fc':      '📅 14-Day Forecast (RBC)',
         'tab_comp_fc':       '🔬 By Component',
         'tab_blood_type':    '🩸 Days by Blood Type',
         'tab_comp_stock':    '📊 Component Stock',
@@ -95,7 +95,7 @@ TEXT = {
         'report_title':      '📄 Operations Report',
         'log_title':         '🤖 Agent Execution Log',
         # Chart titles
-        'chart_total_fc':    'Today ({date}) · 14-Day Forecast',
+        'chart_total_fc':    'Red Blood Cells (RBC) · 14-Day Forecast (anchored {date})',
         'chart_comp_fc':     'Component-wise Forecast (2 Months)',
         'chart_blood_days':  'RBC Days by Blood Type',
         'chart_comp_stock':  'Component Stock (% of Historical Avg)',
@@ -524,8 +524,9 @@ def run_pipeline():
 # ══════════════════════════════════════════════════════════════════
 # 차트 함수
 # ══════════════════════════════════════════════════════════════════
-def chart_forecast(result):
-    """오늘 실측값 → 14일 예측 차트 (오늘부터만 표시)"""
+def chart_forecast(result, lang='한국어'):
+    """오늘 실측값 → 14일 예측 차트 (농축적혈구 RBC, 오늘부터만 표시)"""
+    T          = TEXT[lang]
     fc_df      = pd.DataFrame(result['forecast_14d'])
     fc_dates   = pd.to_datetime(fc_df['date'])
     fc_vals    = fc_df['forecast'].values
@@ -585,7 +586,7 @@ def chart_forecast(result):
                            xanchor='left', font=dict(size=9, color=color), xshift=4)
 
     fig.update_layout(
-        title=dict(text=f'📅 오늘({today.strftime("%Y-%m-%d")}) 실측 기준  14일 예측',
+        title=dict(text='📅 ' + T['chart_total_fc'].format(date=today.strftime("%Y-%m-%d")),
                    font=dict(size=13, color='#333')),
         xaxis=dict(showgrid=False, tickformat='%m/%d',
                    range=[today - pd.Timedelta(hours=12),
@@ -1191,9 +1192,15 @@ col_l, col_r = st.columns([3, 2])
 with col_l:
     tab_fc, tab_comp = st.tabs([T['tab_total_fc'], T['tab_comp_fc']])
     with tab_fc:
-        st.plotly_chart(chart_forecast(result), use_container_width=True)
+        st.plotly_chart(chart_forecast(result, lang), use_container_width=True)
+        st.caption('농축적혈구(RBC)는 일별 데이터가 있어 일 단위 예측이 가능합니다.'
+                   if lang == '한국어' else
+                   'RBC has daily data, enabling day-level forecasting.')
     with tab_comp:
         st.plotly_chart(chart_component_forecast(result, lang), use_container_width=True)
+        st.caption('혈소판(PLT)·혈장(FFP)·성분채혈혈소판(SDP)은 월별 데이터만 공개되어 월 단위로 예측합니다.'
+                   if lang == '한국어' else
+                   'PLT/FFP/SDP have only monthly data, so forecasts are monthly.')
 with col_r:
     tab1, tab2 = st.tabs([T['tab_blood_type'], T['tab_comp_stock']])
     with tab1:
