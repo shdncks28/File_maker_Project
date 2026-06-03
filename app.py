@@ -48,6 +48,14 @@ TEXT = {
         'tab_gap':           '⚖️ 공급-수요 갭',
         # 보고서/로그
         'report_title':      '📄 운영 보고서',
+        'report_tab_current':'🎯 현재 유력 상황 보고서',
+        'report_tab_scenario':'🔀 시나리오별 대응 보고서',
+        'scenario_caption':  '각 위험 등급이 발생할 경우의 예상 상황과 대응 방안입니다. 현재 등급은 강조 표시됩니다.',
+        'scenario_current':  '현재',
+        'scenario_trigger':  '발생 조건',
+        'scenario_est':      '예상 보유량',
+        'scenario_action':   '대응 방안',
+        'scenario_boost':    '목표 증가율',
         'log_title':         '🤖 에이전트 실행 로그',
         # 차트 제목
         'chart_total_fc':    '농축적혈구(RBC) 14일 예측 — 오늘({date}) 실측 기준',
@@ -93,6 +101,14 @@ TEXT = {
         'tab_gap':           '⚖️ Supply-Demand Gap',
         # Report/Log
         'report_title':      '📄 Operations Report',
+        'report_tab_current':'🎯 Current Situation Report',
+        'report_tab_scenario':'🔀 Scenario Response Reports',
+        'scenario_caption':  'Expected situations and responses if each risk level occurs. Current level is highlighted.',
+        'scenario_current':  'CURRENT',
+        'scenario_trigger':  'Trigger',
+        'scenario_est':      'Est. Stock',
+        'scenario_action':   'Response',
+        'scenario_boost':    'Target Boost',
         'log_title':         '🤖 Agent Execution Log',
         # Chart titles
         'chart_total_fc':    'Red Blood Cells (RBC) · 14-Day Forecast (anchored {date})',
@@ -137,6 +153,7 @@ st.markdown("""
 }
 .report-box {
     background: #f8f9fa;
+    color: #1a1a1a !important;
     border-left: 4px solid #c62828;
     border-radius: 6px;
     padding: 16px 20px;
@@ -144,6 +161,19 @@ st.markdown("""
     line-height: 1.7;
     white-space: pre-wrap;
 }
+.report-box * { color: #1a1a1a !important; }
+.scenario-card {
+    background: #ffffff;
+    color: #1a1a1a !important;
+    border-radius: 8px;
+    padding: 14px 18px;
+    line-height: 1.6;
+    font-size: 0.9rem;
+    border: 1px solid #e0e0e0;
+    height: 100%;
+}
+.scenario-card * { color: #1a1a1a !important; }
+.scenario-card h4 { margin: 0 0 8px 0; font-size: 1rem; }
 .agent-log {
     font-family: monospace;
     font-size: 0.85rem;
@@ -443,30 +473,90 @@ def report_agent(state):
     logs.append("📄 **Report Agent** — 운영 보고서 생성")
     if USE_LLM:
         comp_str=' / '.join(f"{k}:{v['level']}" for k,v in state.get('component_risks',{}).items())
-        prompt=f"""대한적십자사 혈액 관리 운영 보고서를 작성하세요.
-현황: {state['last_data_date']} 보유량 {state['current_inventory']:,} unit, {state['trend_7d_direction']} ({state['trend_7d_rate']:+.0f}/일), {state['historical_context']}
-위험: {state['risk_level']} ({state['risk_score']}/100), 제제: {comp_str}
-예측: 14일 최저 {state['forecast_min_value']:,} unit ({state['forecast_min_date']}), 부족확률 {state['shortage_probability']*100:.0f}%
-권고: {state.get('intervention_level','')} — {state.get('recommended_action','')}
+        prompt=f"""당신은 대한적십자사 혈액수급 운영 책임자입니다. 아래 데이터로 의사결정용 운영 보고서를 작성하세요.
 
-[현황] → [예측] → [권고] 구조로 200자 내외 한국어 보고서 작성."""
+[현황] {state['last_data_date']} 농축적혈구(RBC) 보유량 {state['current_inventory']:,} unit ({state['rbc_days']}일분)
+       최근 7일 추세 {state['trend_7d_direction']} ({state['trend_7d_rate']:+.0f} unit/일), {state['historical_context']}
+[위험] 등급 {state['risk_level']} (위험점수 {state['risk_score']}/100), 제제별 {comp_str}
+[예측] 향후 14일 최저 {state['forecast_min_value']:,} unit ({state['forecast_min_date']}), 부족확률 {state['shortage_probability']*100:.0f}%
+[권고] {state.get('intervention_level','')} — {state.get('recommended_action','')}
+
+다음 4개 소제목을 그대로 사용하고 각 항목을 1~2문장으로 작성하세요. 수치 근거를 반드시 포함하세요.
+■ 현황 진단
+■ 위험 평가
+■ 14일 전망
+■ 권고 조치
+한국어로, 마크다운 강조(**)는 쓰지 마세요."""
         try:
             report=llm.invoke([HumanMessage(content=prompt)]).content.strip()
-        except:
+        except Exception:
             report=_rule_report(state)
     else:
         report=_rule_report(state)
     logs.append("  → 보고서 생성 완료 ✅")
     return {'final_report':report,'agent_logs':logs}
 
+
+# ──────────────────────────────────────────────────────────────────
+#  시나리오 보고서: 4개 위험 등급별 "만약 ~라면" 대응 시나리오
+# ──────────────────────────────────────────────────────────────────
+SCENARIO_DEFS = [
+    {'level':'NORMAL',   'emoji':'🟢', 'days':'5일 이상',
+     'trigger':'RBC 보유량이 5일분 이상으로 안정적인 경우',
+     'action':'정기 헌혈 안내 채널만 정상 운영하며 모니터링 유지. 별도 캠페인 불필요.',
+     'boost':'0%'},
+    {'level':'WATCH',    'emoji':'🔵', 'days':'3~5일',
+     'trigger':'RBC 보유량이 3~5일분으로 감소 징후가 보이는 경우',
+     'action':'헌혈 독려 SNS 게시물 발행 및 정기 헌혈자 대상 안내. 향후 추이 일일 점검.',
+     'boost':'+3%'},
+    {'level':'CAUTION',  'emoji':'🟡', 'days':'2~3일',
+     'trigger':'RBC 보유량이 2~3일분으로 부분적 부족이 발생한 경우',
+     'action':'정기헌혈자 대상 SMS 일괄 발송 및 헌혈의집 방문 유도 이벤트 운영.',
+     'boost':'+5%'},
+    {'level':'WARNING',  'emoji':'🟠', 'days':'1~2일',
+     'trigger':'RBC 보유량이 1~2일분으로 부족이 지속되는 경우',
+     'action':'SNS 집중 캠페인 + 단체헌혈 협약기관 긴급 연락. 인근 혈액원 간 재고 이송 검토.',
+     'boost':'+10%'},
+    {'level':'CRITICAL', 'emoji':'🔴', 'days':'1일 미만',
+     'trigger':'RBC 보유량이 1일분 미만으로 수급 위기가 확대된 경우',
+     'action':'전국 긴급 전채널 캠페인 즉시 실행(SNS·TV·라디오) + 기업 단체헌혈 긴급 요청 + 응급 수혈 우선순위 조정.',
+     'boost':'+15%'},
+]
+
+def build_scenario_reports(result):
+    """현재 상태 기준 + 4개 가상 시나리오 보고서 카드 데이터 반환"""
+    rbc_days   = result.get('rbc_days', 0)
+    daily_need = result['current_inventory'] / rbc_days if rbc_days > 0 else 5052
+    cur_level  = result['risk_level']
+
+    cards = []
+    for sc in SCENARIO_DEFS:
+        # 해당 시나리오의 대표 보유일수로 예상 보유량 환산
+        rep_days = {'NORMAL':6, 'WATCH':4, 'CAUTION':2.5, 'WARNING':1.5, 'CRITICAL':0.5}[sc['level']]
+        est_unit = int(rep_days * daily_need)
+        cards.append({
+            **sc,
+            'est_unit':   est_unit,
+            'is_current': (sc['level'] == cur_level),
+        })
+    return cards
+
 def _rule_report(s):
-    rl={'NORMAL':'정상','CAUTION':'주의','WARNING':'경고','CRITICAL':'위기'}
+    rl={'NORMAL':'정상','WATCH':'관심','CAUTION':'주의','WARNING':'경고','CRITICAL':'위기'}
     am=_ACTION_RULES.get(s.get('risk_level','NORMAL'),_ACTION_RULES['NORMAL'])
-    return (f"[현황] {s['last_data_date']} 기준 혈액 보유량 {s['current_inventory']:,} unit. "
-            f"최근 7일 추세 {s['trend_7d_direction']} ({s['trend_7d_rate']:+.0f} unit/일). {s['historical_context']}.\n\n"
-            f"[예측] 향후 14일 내 최저 보유량 {s['forecast_min_value']:,} unit 예상 ({s['forecast_min_date']}). "
-            f"부족 확률 {s['shortage_probability']*100:.0f}%.\n\n"
-            f"[권고] 위험 등급 {rl.get(s['risk_level'],s['risk_level'])} — {am[1]}")
+    return (
+        f"■ 현황 진단\n"
+        f"{s['last_data_date']} 기준 농축적혈구(RBC) 보유량은 {s['current_inventory']:,} unit"
+        f"({s.get('rbc_days','-')}일분)이며, 최근 7일 추세는 {s['trend_7d_direction']}"
+        f"({s['trend_7d_rate']:+.0f} unit/일)입니다. {s['historical_context']}.\n\n"
+        f"■ 위험 평가\n"
+        f"종합 위험점수는 {s['risk_score']}/100점으로 '{rl.get(s['risk_level'],s['risk_level'])}' 등급에 해당합니다.\n\n"
+        f"■ 14일 전망\n"
+        f"향후 14일 내 최저 보유량은 {s['forecast_min_value']:,} unit으로 예상되며"
+        f"({s['forecast_min_date']}), 주의 수준 이하로 떨어질 확률은 {s['shortage_probability']*100:.0f}%입니다.\n\n"
+        f"■ 권고 조치\n"
+        f"{am[1]} (목표 증가율 {am[3]})."
+    )
 
 def risk_router(state):
     return 'action' if state['risk_level'] in ('CAUTION','WARNING','CRITICAL') else 'report'
@@ -1210,16 +1300,48 @@ with col_r:
 
 st.divider()
 
-# 운영 보고서
+# 운영 보고서 (현재 유력 / 시나리오별)
 bg     = RISK_BG.get(risk, '#f8f9fa')
 border = RISK_COLOR.get(risk, '#c62828')
-st.markdown(f"**{T['report_title']}**")
-st.markdown(
-    f'<div class="report-box" style="border-left-color:{border};background:{bg};">'
-    f'{result.get("final_report","")}'
-    f'</div>',
-    unsafe_allow_html=True
-)
+st.markdown(f"## {T['report_title']}")
+
+rep_tab1, rep_tab2 = st.tabs([T['report_tab_current'], T['report_tab_scenario']])
+
+# ── 탭 1: 현재 유력 상황 보고서 ──────────────────────────────────
+with rep_tab1:
+    report_html = result.get("final_report", "").replace("\n", "<br>")
+    st.markdown(
+        f'<div class="report-box" style="border-left-color:{border};background:{bg};">'
+        f'{report_html}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+# ── 탭 2: 시나리오별 대응 보고서 ─────────────────────────────────
+with rep_tab2:
+    st.caption(T['scenario_caption'])
+    cards = build_scenario_reports(result)
+    cols  = st.columns(len(cards))
+    for col, sc in zip(cols, cards):
+        with col:
+            # 현재 등급이면 강조 테두리
+            edge   = RISK_COLOR.get(sc['level'], '#888')
+            border_w = '3px' if sc['is_current'] else '1px'
+            badge  = (f'<span style="background:{edge};color:#fff;padding:1px 7px;'
+                      f'border-radius:8px;font-size:0.72rem;">● {T["scenario_current"]}</span>'
+                      if sc['is_current'] else '')
+            st.markdown(
+                f'<div class="scenario-card" style="border:{border_w} solid {edge};">'
+                f'<h4>{sc["emoji"]} {sc["level"]} {badge}</h4>'
+                f'<div style="color:#666 !important;font-size:0.8rem;margin-bottom:6px;">'
+                f'RBC {sc["days"]} · ~{sc["est_unit"]:,} unit</div>'
+                f'<b>{T["scenario_trigger"]}</b><br>{sc["trigger"]}<br><br>'
+                f'<b>{T["scenario_action"]}</b><br>{sc["action"]}<br><br>'
+                f'<span style="color:{edge} !important;font-weight:bold;">'
+                f'{T["scenario_boost"]}: {sc["boost"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
 # 에이전트 로그
 with st.expander(T['log_title'], expanded=False):
