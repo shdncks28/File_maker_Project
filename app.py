@@ -1374,10 +1374,8 @@ with rep_tab2:
 
     for sc in cards_sorted:
         edge   = RISK_COLOR.get(sc['level'], '#888')
-        cur_badge = (f'<span style="background:{edge};color:#fff;padding:2px 9px;'
-                     f'border-radius:10px;font-size:0.75rem;margin-left:8px;">● {T["scenario_current"]}</span>'
-                     if sc['is_current'] else '')
-        title = f'{sc["emoji"]} {sc["level"]} — RBC {sc["days"]} (~{sc["est_unit"]:,} unit){cur_badge}'
+        cur_mark = f'  ◀ {T["scenario_current"]}' if sc['is_current'] else ''
+        title = f'{sc["emoji"]} {sc["level"]} — RBC {sc["days"]} (~{sc["est_unit"]:,} unit){cur_mark}'
 
         with st.expander(title, expanded=sc['is_current']):
             measures_html = ''.join(f'<li style="margin-bottom:4px;">{m}</li>' for m in sc['measures'])
