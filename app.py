@@ -236,9 +236,9 @@ def classify_krc_risk(days: float) -> str:
 # ══════════════════════════════════════════════════════════════════
 USE_LLM = bool(os.environ.get('OPENAI_API_KEY', ''))
 if USE_LLM:
-    from langchain_openai import ChatOpenAI
+    from langchain.chat_models import init_chat_model
     from langchain_core.messages import HumanMessage
-    llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.3, max_tokens=1024)
+    llm = init_chat_model(model="openai:gpt-4o-mini", temperature=0.3)
 else:
     llm = None
 
