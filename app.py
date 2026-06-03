@@ -501,43 +501,90 @@ def report_agent(state):
 #  시나리오 보고서: 4개 위험 등급별 "만약 ~라면" 대응 시나리오
 # ──────────────────────────────────────────────────────────────────
 SCENARIO_DEFS = [
-    {'level':'NORMAL',   'emoji':'🟢', 'days':'5일 이상',
+    {'level':'NORMAL',   'emoji':'🟢', 'days':'5일 이상', 'rep_days':6,
      'trigger':'RBC 보유량이 5일분 이상으로 안정적인 경우',
-     'action':'정기 헌혈 안내 채널만 정상 운영하며 모니터링 유지. 별도 캠페인 불필요.',
+     'channel':'정기 채널 (헌혈앱 푸시, 홈페이지 배너)',
+     'target':'전체 등록 헌혈자',
+     'timing':'주간 정기 안내',
+     'measures':[
+        '레드커넥트 앱 정기 푸시 1회/주 발송',
+        '헌혈의집 예약 정상 운영, 별도 인센티브 없음',
+        '제제별 보유 추이 주 2회 모니터링',
+        '단체헌혈 협약기관 정기 일정 유지',
+     ],
      'boost':'0%'},
-    {'level':'WATCH',    'emoji':'🔵', 'days':'3~5일',
+    {'level':'WATCH',    'emoji':'🔵', 'days':'3~5일', 'rep_days':4,
      'trigger':'RBC 보유량이 3~5일분으로 감소 징후가 보이는 경우',
-     'action':'헌혈 독려 SNS 게시물 발행 및 정기 헌혈자 대상 안내. 향후 추이 일일 점검.',
+     'channel':'SNS (인스타·카카오 채널) + 앱 푸시',
+     'target':'최근 6개월 내 헌혈 이력자',
+     'timing':'주 2~3회',
+     'measures':[
+        'SNS 헌혈 독려 카드뉴스 주 2회 게시',
+        '직전 6개월 헌혈자 대상 앱 푸시 + 카카오 알림톡',
+        'O형·A형 등 감소 폭 큰 혈액형 우선 호소',
+        '일별 보유량 추이 모니터링으로 전환 (주간→일간)',
+     ],
      'boost':'+3%'},
-    {'level':'CAUTION',  'emoji':'🟡', 'days':'2~3일',
+    {'level':'CAUTION',  'emoji':'🟡', 'days':'2~3일', 'rep_days':2.5,
      'trigger':'RBC 보유량이 2~3일분으로 부분적 부족이 발생한 경우',
-     'action':'정기헌혈자 대상 SMS 일괄 발송 및 헌혈의집 방문 유도 이벤트 운영.',
+     'channel':'SMS 일괄 발송 + 헌혈의집 현장 이벤트',
+     'target':'전체 등록 헌혈자 + 휴면 헌혈자',
+     'timing':'즉시, 이후 격일 반복',
+     'measures':[
+        '등록 헌혈자 전체 대상 SMS 일괄 발송 (예약 링크 포함)',
+        '헌혈의집 방문 시 기념품·문화상품권 등 인센티브 제공',
+        '대학·기업 단체헌혈 일정 1주 내 조기 편성 요청',
+        '부족 혈액형 지정 호소 메시지 차별 발송',
+        '인근 혈액원 재고 현황 공유 및 이송 가능성 사전 점검',
+     ],
      'boost':'+5%'},
-    {'level':'WARNING',  'emoji':'🟠', 'days':'1~2일',
+    {'level':'WARNING',  'emoji':'🟠', 'days':'1~2일', 'rep_days':1.5,
      'trigger':'RBC 보유량이 1~2일분으로 부족이 지속되는 경우',
-     'action':'SNS 집중 캠페인 + 단체헌혈 협약기관 긴급 연락. 인근 혈액원 간 재고 이송 검토.',
+     'channel':'전 디지털 채널 집중 + 협약기관 직접 연락',
+     'target':'전체 헌혈자 + 단체헌혈 협약기관 + 지역 커뮤니티',
+     'timing':'즉시, 매일 반복 집행',
+     'measures':[
+        'SNS·앱·SMS 동시 집중 캠페인 (1일 1회 이상)',
+        '단체헌혈 협약 대학·기업·관공서 담당자 직접 전화 요청',
+        '인근 권역 혈액원 간 재고 긴급 이송 실행',
+        '주말·야간 헌혈의집 운영시간 한시 연장',
+        '지역 언론(지역방송·신문)에 헌혈 협조 보도자료 배포',
+        '부족 혈액형(특히 O형) 집중 호소 및 지정헌혈 유도',
+     ],
      'boost':'+10%'},
-    {'level':'CRITICAL', 'emoji':'🔴', 'days':'1일 미만',
+    {'level':'CRITICAL', 'emoji':'🔴', 'days':'1일 미만', 'rep_days':0.5,
      'trigger':'RBC 보유량이 1일분 미만으로 수급 위기가 확대된 경우',
-     'action':'전국 긴급 전채널 캠페인 즉시 실행(SNS·TV·라디오) + 기업 단체헌혈 긴급 요청 + 응급 수혈 우선순위 조정.',
+     'channel':'전국 전채널 (TV·라디오 포함) 비상 동원',
+     'target':'전 국민 + 정부·지자체·군부대',
+     'timing':'즉시, 위기 해소 시까지 상시',
+     'measures':[
+        '전국 긴급 전채널 캠페인 즉시 발령 (SNS·TV·라디오 동시 송출)',
+        '보건복지부·지자체 협조 요청 및 공공기관 단체헌혈 긴급 동원',
+        '군부대·경찰 등 대규모 단체헌혈 긴급 협조 요청',
+        '전국 혈액원 간 재고 재배분 및 응급 수혈 우선순위 조정',
+        '의료기관에 비응급 수술 일정 조정 협조 요청',
+        '헌혈의집 전 지점 운영시간 최대 연장 및 임시 헌혈 차량 추가 배치',
+     ],
      'boost':'+15%'},
 ]
 
 def build_scenario_reports(result):
-    """현재 상태 기준 + 4개 가상 시나리오 보고서 카드 데이터 반환"""
+    """현재 상태 기준 + 5개 가상 시나리오 보고서 카드 데이터 반환"""
     rbc_days   = result.get('rbc_days', 0)
     daily_need = result['current_inventory'] / rbc_days if rbc_days > 0 else 5052
     cur_level  = result['risk_level']
 
     cards = []
     for sc in SCENARIO_DEFS:
-        # 해당 시나리오의 대표 보유일수로 예상 보유량 환산
-        rep_days = {'NORMAL':6, 'WATCH':4, 'CAUTION':2.5, 'WARNING':1.5, 'CRITICAL':0.5}[sc['level']]
-        est_unit = int(rep_days * daily_need)
+        est_unit  = int(sc['rep_days'] * daily_need)
+        # 목표 증가율 적용 시 일일 추가 확보량
+        boost_pct = int(sc['boost'].replace('%', '').replace('+', '')) / 100
+        extra_per_day = int(daily_need * boost_pct)
         cards.append({
             **sc,
-            'est_unit':   est_unit,
-            'is_current': (sc['level'] == cur_level),
+            'est_unit':      est_unit,
+            'extra_per_day': extra_per_day,
+            'is_current':    (sc['level'] == cur_level),
         })
     return cards
 
@@ -1321,24 +1368,37 @@ with rep_tab1:
 with rep_tab2:
     st.caption(T['scenario_caption'])
     cards = build_scenario_reports(result)
-    cols  = st.columns(len(cards))
-    for col, sc in zip(cols, cards):
-        with col:
-            # 현재 등급이면 강조 테두리
-            edge   = RISK_COLOR.get(sc['level'], '#888')
-            border_w = '3px' if sc['is_current'] else '1px'
-            badge  = (f'<span style="background:{edge};color:#fff;padding:1px 7px;'
-                      f'border-radius:8px;font-size:0.72rem;">● {T["scenario_current"]}</span>'
-                      if sc['is_current'] else '')
+
+    # 현재 등급을 맨 앞으로 정렬 (강조)
+    cards_sorted = sorted(cards, key=lambda c: (not c['is_current']))
+
+    for sc in cards_sorted:
+        edge   = RISK_COLOR.get(sc['level'], '#888')
+        cur_badge = (f'<span style="background:{edge};color:#fff;padding:2px 9px;'
+                     f'border-radius:10px;font-size:0.75rem;margin-left:8px;">● {T["scenario_current"]}</span>'
+                     if sc['is_current'] else '')
+        title = f'{sc["emoji"]} {sc["level"]} — RBC {sc["days"]} (~{sc["est_unit"]:,} unit){cur_badge}'
+
+        with st.expander(title, expanded=sc['is_current']):
+            measures_html = ''.join(f'<li style="margin-bottom:4px;">{m}</li>' for m in sc['measures'])
+            extra = sc['extra_per_day']
+            extra_line = (f'목표 헌혈 증가율 <b>{sc["boost"]}</b> 달성 시 '
+                          f'<b>일일 약 +{extra:,} unit</b> 추가 확보 예상'
+                          if extra > 0 else '추가 캠페인 불필요 (현 수준 유지)')
+
             st.markdown(
-                f'<div class="scenario-card" style="border:{border_w} solid {edge};">'
-                f'<h4>{sc["emoji"]} {sc["level"]} {badge}</h4>'
-                f'<div style="color:#666 !important;font-size:0.8rem;margin-bottom:6px;">'
-                f'RBC {sc["days"]} · ~{sc["est_unit"]:,} unit</div>'
-                f'<b>{T["scenario_trigger"]}</b><br>{sc["trigger"]}<br><br>'
-                f'<b>{T["scenario_action"]}</b><br>{sc["action"]}<br><br>'
-                f'<span style="color:{edge} !important;font-weight:bold;">'
-                f'{T["scenario_boost"]}: {sc["boost"]}</span>'
+                f'<div class="scenario-card" style="border-left:4px solid {edge};">'
+                f'<div style="display:grid;grid-template-columns:90px 1fr;gap:6px 12px;">'
+                f'<b>발생 조건</b><span>{sc["trigger"]}</span>'
+                f'<b>발령 채널</b><span>{sc["channel"]}</span>'
+                f'<b>대상</b><span>{sc["target"]}</span>'
+                f'<b>집행 시점</b><span>{sc["timing"]}</span>'
+                f'</div>'
+                f'<div style="margin-top:10px;"><b>세부 실행 조치</b>'
+                f'<ul style="margin:6px 0 0 0;padding-left:20px;">{measures_html}</ul></div>'
+                f'<div style="margin-top:10px;padding:8px 12px;background:rgba(0,0,0,0.04);'
+                f'border-radius:6px;color:{edge} !important;">'
+                f'🎯 {extra_line}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
