@@ -56,6 +56,10 @@ TEXT = {
         'scenario_est':      '예상 보유량',
         'scenario_action':   '대응 방안',
         'scenario_boost':    '목표 증가율',
+        'risk_reasoning_title': '🧠 위험 평가 근거 (AI 추론)',
+        'risk_key_factor':   '핵심 주의 요소',
+        'risk_by_llm':       'gpt-4o-mini 추론',
+        'risk_by_formula':   '규칙 기반 공식',
         'log_title':         '🤖 에이전트 실행 로그',
         # 차트 제목
         'chart_total_fc':    '농축적혈구(RBC) 14일 예측 — 오늘({date}) 실측 기준',
@@ -109,6 +113,10 @@ TEXT = {
         'scenario_est':      'Est. Stock',
         'scenario_action':   'Response',
         'scenario_boost':    'Target Boost',
+        'risk_reasoning_title': '🧠 Risk Assessment Rationale (AI Reasoning)',
+        'risk_key_factor':   'Key Factor',
+        'risk_by_llm':       'gpt-4o-mini reasoning',
+        'risk_by_formula':   'Rule-based formula',
         'log_title':         '🤖 Agent Execution Log',
         # Chart titles
         'chart_total_fc':    'Red Blood Cells (RBC) · 14-Day Forecast (anchored {date})',
@@ -265,6 +273,7 @@ class BloodAgentState(TypedDict):
     forecast_14d: list; forecast_min_value: int; forecast_min_date: str
     shortage_probability: float; days_until_warning: int
     risk_level: str; risk_score: int; component_risks: dict; historical_context: str
+    risk_reasoning: list; risk_key_factor: str; risk_method: str
     intervention_level: str; recommended_action: str; action_reasoning: str
     final_report: str; agent_logs: list
 
@@ -383,63 +392,129 @@ def forecasting_agent(state):
         'agent_logs':           logs,
     }
 
-def risk_agent(state):
-    logs = state.get('agent_logs', [])
-    logs.append("🟠 **Risk Agent** — KRC 공식 기준 위험 점수 산출")
-
-    rbc_days = state['rbc_days']      # 오늘 실제 보유일수
-    fc_days_list = [r['days'] for r in state['forecast_14d']]
-    fc_min_days  = min(fc_days_list) if fc_days_list else rbc_days
-    d_warn   = state['days_until_warning']
-    is_risk  = state['is_risk_season']
-    sp       = state['shortage_probability']
-
-    # ── 위험 점수 (KRC 일수 기준, 0-100) ─────────────────────────
+def _compute_score_formula(rbc_days, fc_min_days, d_warn, sp, is_risk):
+    """규칙 기반 위험 점수 (LLM 판단의 참고용 baseline)"""
     score = 0
-    # 현재 보유일수 (0-40점)
     if   rbc_days < 1: score += 40
     elif rbc_days < 2: score += 30
     elif rbc_days < 3: score += 20
     elif rbc_days < 5: score += 10
-
-    # 예측 최저 보유일수 (0-30점)
     if   fc_min_days < 1: score += 30
     elif fc_min_days < 2: score += 22
     elif fc_min_days < 3: score += 14
     elif fc_min_days < 5: score += 6
-
-    # 경고 도달 여유 (0-20점)
     if   d_warn <= 2:  score += 20
     elif d_warn <= 5:  score += 15
     elif d_warn <= 10: score += 8
-
-    # 부족 확률 (0-5점)
     score += int(sp * 5)
-    # 위험 시즌 (0-5점)
     if is_risk: score += 5
+    return min(100, score)
 
-    score = min(100, score)
 
-    # KRC 공식 위험 등급 (일수 기반)
-    lvl = classify_krc_risk(rbc_days)
+def risk_agent(state):
+    logs = state.get('agent_logs', [])
+    logs.append("🟠 **Risk Agent** — LLM 추론 기반 위험 평가 (공식 점수 참고)")
+
+    cur          = state['current_inventory']
+    rbc_days     = state['rbc_days']
+    fc_days_list = [r['days'] for r in state['forecast_14d']]
+    fc_min_days  = min(fc_days_list) if fc_days_list else rbc_days
+    d_warn       = state['days_until_warning']
+    is_risk      = state['is_risk_season']
+    sp           = state['shortage_probability']
+
+    # ── 1) 규칙 기반 점수 계산 (참고용 baseline) ─────────────────
+    formula_score = _compute_score_formula(rbc_days, fc_min_days, d_warn, sp, is_risk)
+    formula_level = classify_krc_risk(rbc_days)
+
+    # ── 2) 제제별 위험도 ─────────────────────────────────────────
     mbt = load_monthly_by_type()
-    lm = mbt['date'].max(); ld = mbt[mbt['date']==lm]
-    ha = mbt[mbt['date'].dt.month==lm.month].groupby('component_code')['inventory'].mean()
-    comp={}
-    for _,row in ld.iterrows():
-        code=row['component_code']; val=row['inventory']
-        avg=ha.get(code,val); ratio=val/avg if avg>0 else 1.0
-        thr=0.85 if code in('PLT','SDP') else 0.75
-        level='WARNING' if ratio<thr-0.10 else('CAUTION' if ratio<thr else 'NORMAL')
-        comp[code]={'level':level,'ratio':round(ratio,3),'value':int(val)}
+    lm  = mbt['date'].max(); ld = mbt[mbt['date'] == lm]
+    ha  = mbt[mbt['date'].dt.month == lm.month].groupby('component_code')['inventory'].mean()
+    comp = {}
+    for _, row in ld.iterrows():
+        code = row['component_code']; val = row['inventory']
+        avg  = ha.get(code, val); ratio = val / avg if avg > 0 else 1.0
+        thr  = 0.85 if code in ('PLT', 'SDP') else 0.75
+        level = 'WARNING' if ratio < thr - 0.10 else ('CAUTION' if ratio < thr else 'NORMAL')
+        comp[code] = {'level': level, 'ratio': round(ratio, 3), 'value': int(val)}
+
+    # ── 3) 전년 동기 맥락 ────────────────────────────────────────
     df = load_daily_inventory(); ts = df.set_index('date')['inventory']
     try:
-        prev=ts[ts.index.year==(ts.index.max().year-1)].iloc[-1]; yd=cur-int(prev)
-        ctx=f'전년 동기 대비 {yd:+,} unit ({yd/prev*100:+.1f}%)'
-    except: ctx='전년 동기 데이터 없음'
-    logs.append(f"  → 위험 점수: **{score}/100**  |  등급: {RISK_EMOJI[lvl]} **{lvl}**")
+        prev = ts[ts.index.year == (ts.index.max().year - 1)].iloc[-1]
+        yd   = cur - int(prev)
+        ctx  = f'전년 동기 대비 {yd:+,} unit ({yd/prev*100:+.1f}%)'
+    except Exception:
+        ctx = '전년 동기 데이터 없음'
+
+    comp_str = ' / '.join(f"{k}:{v['level']}({v['ratio']*100:.0f}%)" for k, v in comp.items())
+
+    # ── 4) LLM 추론 (공식 점수를 참고자료로 제공) ────────────────
+    lvl, score, reasoning, key_factor, method = formula_level, formula_score, [], '', 'formula'
+
+    if USE_LLM:
+        prompt = f"""당신은 대한적십자사 혈액수급 위기 분석 전문가입니다.
+아래 데이터를 종합적으로 해석하여 위험 등급을 판단하세요.
+
+[현황 데이터]
+- 농축적혈구(RBC) 현재 보유: {cur:,} unit ({rbc_days}일분)
+- 최근 7일 추세: {state['trend_7d_direction']} ({state['trend_7d_rate']:+.0f} unit/일)
+- 14일 예측 최저 보유일수: {fc_min_days}일분
+- 경고(2일분) 도달까지: {d_warn}일
+- 주의 이하 부족확률: {sp*100:.0f}%
+- 계절: {state['current_season']} (위험시즌: {'예' if is_risk else '아니오'})
+- 전년 동기: {ctx}
+- 제제별 위험도: {comp_str}
+
+[참고: 규칙 기반 공식 점수]
+- 공식 산출 점수: {formula_score}/100
+- 공식 산출 등급: {formula_level}
+※ 이 공식 점수는 참고용입니다. 추세·계절·전년대비 등 맥락을 고려해
+   필요하면 공식과 다르게 판단해도 됩니다. 단, 크게 벗어나면 근거를 명확히 하세요.
+
+[KRC 공식 기준] 정상≥5일 / 관심3~5일 / 주의2~3일 / 경계1~2일 / 심각<1일
+
+다음 JSON 형식으로만 응답하세요:
+{{
+  "risk_level": "NORMAL|WATCH|CAUTION|WARNING|CRITICAL 중 하나",
+  "risk_score": 0~100 정수,
+  "reasoning": ["판단 근거 1", "판단 근거 2", "판단 근거 3"],
+  "key_factor": "가장 주의해야 할 핵심 요소 (1문장)"
+}}"""
+        try:
+            raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+            if '```' in raw:
+                raw = raw.split('```')[1]
+                if raw.startswith('json'): raw = raw[4:]
+            parsed = json.loads(raw.strip())
+            lvl        = parsed.get('risk_level', formula_level)
+            score      = int(parsed.get('risk_score', formula_score))
+            reasoning  = parsed.get('reasoning', [])
+            key_factor = parsed.get('key_factor', '')
+            method     = 'LLM'
+            logs.append(f"  → LLM 판단: {RISK_EMOJI.get(lvl,'❓')} **{lvl}** ({score}/100)  [공식: {formula_level} {formula_score}점]")
+            if key_factor:
+                logs.append(f"  → 핵심 요소: {key_factor}")
+        except Exception as e:
+            logs.append(f"  → ⚠️ LLM 파싱 실패 ({e}) → 공식 점수 사용")
+            reasoning = [f'공식 점수 {formula_score}점 기준 {formula_level} 등급 판정']
+    else:
+        reasoning = [f'규칙 기반 공식 점수 {formula_score}점 → {formula_level} 등급']
+        logs.append(f"  → 위험 점수: **{score}/100**  |  등급: {RISK_EMOJI.get(lvl,'❓')} **{lvl}** (공식)")
+
     logs.append(f"  → 전년 동기: {ctx}")
-    return {'risk_level':lvl,'risk_score':score,'component_risks':comp,'historical_context':ctx,'agent_logs':logs}
+
+    return {
+        'risk_level':         lvl,
+        'risk_score':         score,
+        'component_risks':    comp,
+        'historical_context': ctx,
+        'risk_reasoning':     reasoning,
+        'risk_key_factor':    key_factor,
+        'risk_method':        method,
+        'agent_logs':         logs,
+    }
 
 def action_agent(state):
     logs = state.get('agent_logs', [])
@@ -651,6 +726,9 @@ def run_pipeline():
         'risk_score':          0,
         'component_risks':     {},
         'historical_context':  '',
+        'risk_reasoning':      [],
+        'risk_key_factor':     '',
+        'risk_method':         '',
         'intervention_level':  'NONE',
         'recommended_action':  '',
         'action_reasoning':    '',
@@ -1322,6 +1400,26 @@ with c4:
               result['current_season'])
 
 st.caption(f"{result['historical_context']}  ·  {result['last_data_date']}")
+
+# ── 위험 평가 근거 (AI 추론) ─────────────────────────────────────
+reasoning = result.get('risk_reasoning', [])
+if reasoning:
+    method = result.get('risk_method', 'formula')
+    method_label = T['risk_by_llm'] if method == 'LLM' else T['risk_by_formula']
+    edge = RISK_COLOR.get(risk, '#888')
+    items = ''.join(f'<li style="margin-bottom:3px;">{r}</li>' for r in reasoning)
+    key   = result.get('risk_key_factor', '')
+    key_html = (f'<div style="margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.04);'
+                f'border-radius:6px;"><b>⚠️ {T["risk_key_factor"]}:</b> {key}</div>'
+                if key else '')
+    with st.expander(f"{T['risk_reasoning_title']}  ·  {method_label}", expanded=True):
+        st.markdown(
+            f'<div class="scenario-card" style="border-left:4px solid {edge};">'
+            f'<ul style="margin:0;padding-left:20px;">{items}</ul>'
+            f'{key_html}</div>',
+            unsafe_allow_html=True
+        )
+
 st.divider()
 
 # 메인 차트 2열
