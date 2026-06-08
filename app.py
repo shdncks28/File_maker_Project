@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from scraper import scrape_blood_inventory, KRC_RISK_LEVELS
+from optimizer import optimize_response, estimate_daily_need, CAMPAIGN_TIERS
 
 warnings.filterwarnings('ignore')
 load_dotenv()
@@ -46,6 +47,7 @@ TEXT = {
         'tab_campaign':      '💉 캠페인 시뮬레이션',
         'tab_trend':         '📉 헌혈률 장기 추세',
         'tab_gap':           '⚖️ 공급-수요 갭',
+        'tab_whatif':        '🎯 What-If 최적화',
         # 보고서/로그
         'report_title':      '📄 운영 보고서',
         'report_tab_current':'🎯 현재 유력 상황 보고서',
@@ -103,6 +105,7 @@ TEXT = {
         'tab_campaign':      '💉 Campaign Simulation',
         'tab_trend':         '📉 Donation Rate Trend',
         'tab_gap':           '⚖️ Supply-Demand Gap',
+        'tab_whatif':        '🎯 What-If Optimizer',
         # Report/Log
         'report_title':      '📄 Operations Report',
         'report_tab_current':'🎯 Current Situation Report',
@@ -1336,6 +1339,61 @@ def chart_supply_demand():
     return fig, surplus_months, deficit_months, worst
 
 
+# ──────────────────────────────────────────────────────────────────
+#  What-If 최적화: Newsvendor 정책 비교 차트
+# ──────────────────────────────────────────────────────────────────
+def chart_optimization(opt_result, lang='한국어'):
+    """캠페인 정책별 총비용(TC) + 부족/폐기 분해 막대 차트"""
+    policies = opt_result['policies']
+    best_name = opt_result['best']['name']
+
+    names   = [p['name'] for p in policies]
+    short_c = [p['E_shortage'] * opt_result['params']['Cu'] for p in policies]
+    waste_c = [p['E_waste']    * opt_result['params']['Co'] for p in policies]
+
+    short_lbl = '부족 비용' if lang == '한국어' else 'Shortage Cost'
+    waste_lbl = '폐기 비용' if lang == '한국어' else 'Waste Cost'
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=names, y=short_c, name=short_lbl,
+        marker_color='#d50000',
+        hovertemplate='%{x}<br>' + short_lbl + ': <b>%{y:,.0f}</b><extra></extra>'
+    ))
+    fig.add_trace(go.Bar(
+        x=names, y=waste_c, name=waste_lbl,
+        marker_color='#ffb300',
+        hovertemplate='%{x}<br>' + waste_lbl + ': <b>%{y:,.0f}</b><extra></extra>'
+    ))
+
+    # 최적 정책 표시 (총비용 위에 ★)
+    for p in policies:
+        tc = p['total_cost']
+        is_best = (p['name'] == best_name)
+        fig.add_annotation(
+            x=p['name'], y=tc,
+            text=f"★ {tc:,.0f}" if is_best else f"{tc:,.0f}",
+            showarrow=False, yshift=14,
+            font=dict(size=11 if is_best else 9,
+                      color='#2e7d32' if is_best else '#666',
+                      family='Arial Black' if is_best else 'Arial')
+        )
+
+    fig.update_layout(
+        barmode='stack',
+        title=dict(text=('캠페인 정책별 총비용 (TC = Cu·부족 + Co·폐기)'
+                         if lang == '한국어' else
+                         'Total Cost by Policy (TC = Cu·Short + Co·Waste)'),
+                   font=dict(size=13, color='#333')),
+        yaxis=dict(title='총비용' if lang == '한국어' else 'Total Cost',
+                   showgrid=True, gridcolor='#f0f0f0'),
+        legend=dict(orientation='h', y=-0.18),
+        height=380, margin=dict(l=0, r=10, t=70, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+    )
+    return fig
+
+
 # ══════════════════════════════════════════════════════════════════
 # 언어 초기화 (세션 유지)
 # ══════════════════════════════════════════════════════════════════
@@ -1530,7 +1588,8 @@ with st.expander(T['log_title'], expanded=False):
 st.divider()
 st.markdown(f"## {T['analysis_title']}")
 
-tab_a, tab_b, tab_c = st.tabs([T['tab_campaign'], T['tab_trend'], T['tab_gap']])
+tab_a, tab_b, tab_c, tab_d = st.tabs(
+    [T['tab_campaign'], T['tab_trend'], T['tab_gap'], T['tab_whatif']])
 
 with tab_a:
     st.markdown("#### 헌혈 캠페인 강도별 14일 보유량 변화 시뮬레이션")
@@ -1583,6 +1642,90 @@ with tab_c:
     c3.metric("최대 급감 월",
               worst['date'].strftime('%Y년 %m월'),
               f"{worst['delta']:+,.0f} unit")
+
+# ── 탭 D: What-If 최적화 (Newsvendor) ────────────────────────────
+with tab_d:
+    is_ko = (lang == '한국어')
+    st.markdown("#### " + ("혈액형별 부족 시나리오 → 최적 캠페인 도출 (Newsvendor 모델)"
+                           if is_ko else
+                           "Blood-Type Shortage Scenario → Optimal Campaign (Newsvendor)"))
+    st.caption("가상 부족량을 입력하면, 부족·폐기 비용을 최소화하는 캠페인 강도를 계산합니다."
+               if is_ko else
+               "Enter a hypothetical shortage to compute the cost-minimizing campaign tier.")
+
+    # ── 입력 폼 ──────────────────────────────────────────────────
+    ci1, ci2, ci3, ci4 = st.columns(4)
+    with ci1:
+        wf_btype = st.selectbox("혈액형" if is_ko else "Blood Type",
+                                ['A', 'B', 'O', 'AB'], index=1)
+    with ci2:
+        wf_comp = st.selectbox("제제" if is_ko else "Component",
+                               ['RBC', 'PLT'], index=1,
+                               format_func=lambda c: T['comp'][c])
+    with ci3:
+        wf_gap = st.number_input("예측 부족량 (unit)" if is_ko else "Shortage (unit)",
+                                 min_value=10, max_value=10000, value=300, step=50)
+    with ci4:
+        wf_days = st.slider("대응 기간 (일)" if is_ko else "Response Days",
+                            min_value=1, max_value=7, value=3)
+
+    # 비용 비율 설정 (고급)
+    with st.expander("⚙️ " + ("비용 파라미터 (Cu : Co)" if is_ko else "Cost Parameters (Cu : Co)")):
+        cc1, cc2 = st.columns(2)
+        wf_cu = cc1.number_input("Cu (부족 비용, 생명 직결)" if is_ko else "Cu (Underage)",
+                                 min_value=10, max_value=500, value=100, step=10)
+        wf_co = cc2.number_input("Co (폐기+캠페인 비용)" if is_ko else "Co (Overage)",
+                                 min_value=1, max_value=200, value=10, step=5)
+
+    # ── 최적화 실행 ──────────────────────────────────────────────
+    total_need = {'RBC': 5052, 'PLT': 4572}[wf_comp]
+    daily_need = estimate_daily_need(wf_btype, total_need)
+    opt = optimize_response(
+        shortage_gap=wf_gap, daily_need=daily_need,
+        response_days=wf_days, Cu=wf_cu, Co=wf_co,
+    )
+    best = opt['best']
+
+    # ── 결과 KPI ─────────────────────────────────────────────────
+    st.markdown("---")
+    k1, k2, k3 = st.columns(3)
+    k1.metric("✅ " + ("최적 캠페인" if is_ko else "Optimal Tier"),
+              best['name'], best['channel'])
+    k2.metric("💰 " + ("최소 총비용" if is_ko else "Min Total Cost"),
+              f"{best['total_cost']:,.0f}",
+              f"{'부족' if is_ko else 'Short'} {best['E_shortage']:.0f} / "
+              f"{'폐기' if is_ko else 'Waste'} {best['E_waste']:.0f}")
+    k3.metric("🎯 Critical Ratio",
+              f"{opt['critical_ratio']:.3f}",
+              f"{'목표 서비스' if is_ko else 'Service'} {opt['critical_ratio']*100:.0f}%")
+
+    # ── 정책 비교 차트 ───────────────────────────────────────────
+    st.plotly_chart(chart_optimization(opt, lang), use_container_width=True)
+
+    # ── 정책 상세 테이블 ─────────────────────────────────────────
+    import pandas as _pd
+    rows = []
+    for p in opt['policies']:
+        rows.append({
+            ('정책' if is_ko else 'Policy'):        p['name'],
+            ('채널' if is_ko else 'Channel'):       p['channel'],
+            ('기대 공급' if is_ko else 'Supply'):    f"{p['supply_mu']:,.0f}",
+            ('E[부족]' if is_ko else 'E[Short]'):    f"{p['E_shortage']:.1f}",
+            ('E[폐기]' if is_ko else 'E[Waste]'):    f"{p['E_waste']:.1f}",
+            ('총비용' if is_ko else 'Total Cost'):   f"{p['total_cost']:,.0f}",
+            ('서비스%' if is_ko else 'Service%'):    f"{p['service_level']*100:.0f}%",
+        })
+    df_opt = _pd.DataFrame(rows)
+    st.dataframe(df_opt, use_container_width=True, hide_index=True)
+
+    st.caption(
+        f"📐 Newsvendor: TC = Cu·E[부족] + Co·E[폐기]  |  "
+        f"Cu={wf_cu}, Co={wf_co}, Monte Carlo 5,000회  |  "
+        f"{T['comp'][wf_comp]} {wf_btype}형 1일 소요 ≈ {daily_need:.0f} unit"
+        if is_ko else
+        f"📐 Newsvendor: TC = Cu·E[Short] + Co·E[Waste]  |  "
+        f"Cu={wf_cu}, Co={wf_co}, 5,000 Monte Carlo runs"
+    )
 
 st.divider()
 if st.button(T['refresh_btn']):
