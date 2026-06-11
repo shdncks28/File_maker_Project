@@ -1384,6 +1384,23 @@ def load_donation_by_component_daily():
     return pd.read_csv(f'{PROCESSED}/donation_by_component.csv', parse_dates=['date']).set_index('date')
 
 
+@st.cache_data
+def get_waste_slopes():
+    """제제별 [주간 평균 재고 → 주간 폐기량] 회귀 기울기 (실측 보정 계수).
+
+    혈소판 0.039 / RBC 0.003 — 유통기한이 짧을수록 재고가 폐기로
+    전환되는 비율이 높음. What-If 최적화와 캠페인 시뮬레이션에서
+    '폐기 전환율' 보정에 사용."""
+    inv_w = load_disclosure_inv_by_component().resample('W').mean()
+    wst_w = load_waste_by_component().resample('W').sum()
+    slopes = {}
+    for comp in ['platelet', 'RBC', 'plasma']:
+        df = pd.concat([inv_w[comp], wst_w[comp]], axis=1, keys=['inv', 'waste']).dropna()
+        slope, _ = np.polyfit(df['inv'], df['waste'], 1)
+        slopes[comp] = max(float(slope), 0.0)   # 음수(혈장)는 0으로
+    return slopes
+
+
 def chart_waste_trend(lang='한국어'):
     """분석 A: 연간 폐기량(제제별 스택) + 폐기율 추이"""
     is_ko = (lang == '한국어')
@@ -1801,10 +1818,12 @@ with tab_a:
     st.caption("캠페인으로 헌혈이 증가하면 14일 후 보유량이 얼마나 달라지는지 비교합니다.")
     st.plotly_chart(chart_campaign_sim(result), use_container_width=True)
 
-    # D+14 비교 카드
+    # D+14 비교 카드 (+ 실측 기울기 기반 예상 추가 폐기)
     rbc_days  = result.get('rbc_days', 0)
     daily_need = result['current_inventory'] / rbc_days if rbc_days > 0 else 5052
     fc_base_14 = pd.DataFrame(result['forecast_14d'])['forecast'].iloc[-1]
+    slope_rbc  = get_waste_slopes()['RBC']   # 재고 1unit·1주당 폐기 전환 (실측)
+
     c1, c2, c3, c4 = st.columns(4)
     for col, (label, rate) in zip(
         [c1, c2, c3, c4],
@@ -1812,7 +1831,19 @@ with tab_a:
     ):
         val = fc_base_14 + daily_need * rate * 14
         days_val = round(val / daily_need, 1)
-        col.metric(label, f"{val:,.0f} unit", f"{days_val}일분")
+        # 추가 재고는 14일 동안 0→max로 선형 증가 → 평균은 절반, 기간 2주
+        avg_extra  = daily_need * rate * 14 / 2
+        waste_add  = slope_rbc * avg_extra * 2
+        delta = (f"{days_val}일분 · 폐기 +{waste_add:,.0f}" if rate > 0
+                 else f"{days_val}일분")
+        col.metric(label, f"{val:,.0f} unit", delta,
+                   delta_color=("inverse" if rate > 0 else "normal"))
+
+    st.caption(
+        f"🗑️ 예상 추가 폐기 = 실측 재고-폐기 회귀 기울기(RBC {slope_rbc:.4f}/주) × 평균 추가 재고 × 2주. "
+        f"RBC는 유통기한 35일로 전환율이 낮음 — 혈소판이라면 동일 조건에서 약 "
+        f"{get_waste_slopes()['platelet']/slope_rbc:.0f}배의 폐기가 발생합니다."
+    )
 
 with tab_b:
     st.markdown("#### 국민 헌혈률 장기 하락 추세와 구조적 위기 시점")
@@ -1885,9 +1916,18 @@ with tab_d:
     # ── 최적화 실행 ──────────────────────────────────────────────
     total_need = {'RBC': 5052, 'PLT': 4572}[wf_comp]
     daily_need = estimate_daily_need(wf_btype, total_need)
+
+    # 폐기 전환율 (실측 보정): 혈소판=1.0 기준, RBC는 재고-폐기 기울기 비율
+    slopes = get_waste_slopes()
+    if wf_comp == 'PLT':
+        waste_conv = 1.0
+    else:
+        waste_conv = round(min(max(slopes['RBC'] / slopes['platelet'], 0.0), 1.0), 3)
+
     opt = optimize_response(
         shortage_gap=wf_gap, daily_need=daily_need,
         response_days=wf_days, Cu=wf_cu, Co=wf_co,
+        waste_conversion=waste_conv,
     )
     best = opt['best']
 
@@ -1926,10 +1966,12 @@ with tab_d:
     st.caption(
         f"📐 Newsvendor: TC = Cu·E[부족] + Co·E[폐기]  |  "
         f"Cu={wf_cu}, Co={wf_co}, Monte Carlo 5,000회  |  "
-        f"{T['comp'][wf_comp]} {wf_btype}형 1일 소요 ≈ {daily_need:.0f} unit"
+        f"{T['comp'][wf_comp]} {wf_btype}형 1일 소요 ≈ {daily_need:.0f} unit  |  "
+        f"폐기 전환율 κ={waste_conv} ({'혈소판 5일 기준' if wf_comp == 'PLT' else 'RBC 재고-폐기 실측 기울기 비율 보정'})"
         if is_ko else
         f"📐 Newsvendor: TC = Cu·E[Short] + Co·E[Waste]  |  "
-        f"Cu={wf_cu}, Co={wf_co}, 5,000 Monte Carlo runs"
+        f"Cu={wf_cu}, Co={wf_co}, 5,000 Monte Carlo runs  |  "
+        f"waste conversion κ={waste_conv} (calibrated from 2021–2025 stock-waste regression)"
     )
 
 # ── 탭 E: 폐기량 분석 (정보공개 데이터) ──────────────────────────

@@ -34,6 +34,7 @@ def optimize_response(
     Co: float = 10.0,        # Overage cost (폐기 + 캠페인 비용)
     demand_cv: float = 0.15, # 수요(부족분) 변동계수
     supply_cv: float = 0.25, # 캠페인 공급 변동계수
+    waste_conversion: float = 1.0,  # 과잉공급 → 실제 폐기 전환율 (실측 보정)
     n_sim: int = 5000,
     seed: int = 42,
 ) -> dict:
@@ -48,6 +49,10 @@ def optimize_response(
     Cu, Co       : 부족/과잉 단위 비용
     demand_cv    : 수요 불확실성 (변동계수)
     supply_cv    : 캠페인 공급 불확실성
+    waste_conversion : 과잉공급 중 실제 폐기로 이어지는 비율 (0~1).
+        혈소판(유통기한 5일)은 1.0 — 대응기간 내 과잉분 대부분 폐기.
+        RBC(35일)는 재고-폐기 회귀 기울기 비율로 보정 (≈0.07) —
+        과잉분 대부분이 유통기한 내 소진됨. (적십자사 2021-2025 실측)
 
     Returns
     -------
@@ -74,8 +79,9 @@ def optimize_response(
         else:
             supply = np.zeros(n_sim)
 
-        shortage = np.maximum(demand - supply, 0)   # 여전히 부족
-        waste    = np.maximum(supply - demand, 0)   # 과잉 유입 → 폐기
+        shortage = np.maximum(demand - supply, 0)            # 여전히 부족
+        excess   = np.maximum(supply - demand, 0)            # 과잉 유입
+        waste    = excess * waste_conversion                 # 실제 폐기 (실측 전환율 보정)
 
         E_short = float(shortage.mean())
         E_waste = float(waste.mean())
@@ -105,11 +111,12 @@ def optimize_response(
         'best':           best,
         'critical_ratio': round(critical_ratio, 3),
         'params': {
-            'shortage_gap':  shortage_gap,
-            'daily_need':    daily_need,
-            'response_days': response_days,
-            'Cu':            Cu,
-            'Co':            Co,
+            'shortage_gap':     shortage_gap,
+            'daily_need':       daily_need,
+            'response_days':    response_days,
+            'Cu':               Cu,
+            'Co':               Co,
+            'waste_conversion': waste_conversion,
         },
     }
 
