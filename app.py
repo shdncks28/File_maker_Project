@@ -1476,12 +1476,14 @@ def chart_waste_scatter(lang='한국어'):
             x=xs, y=slope * xs + intercept, mode='lines',
             line=dict(color=color, width=2.5), showlegend=False, hoverinfo='skip',
         ), row=1, col=i)
-        # r값 annotation
+        # r값 annotation (row/col 지정 시 plotly가 올바른 축으로 매핑)
         sig = '***' if p < 0.001 else ('*' if p < 0.05 else ' n.s.')
         fig.add_annotation(
-            text=f'r = {r:+.2f}{sig}', xref=f'x{i} domain', yref=f'y{i} domain',
+            text=f'r = {r:+.2f}{sig}',
+            xref='x domain', yref='y domain',
             x=0.05, y=0.95, showarrow=False,
             font=dict(size=12, color=color, family='Arial Black'),
+            row=1, col=i,
         )
 
     fig.update_layout(
