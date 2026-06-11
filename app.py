@@ -40,6 +40,7 @@ TEXT = {
         # 탭
         'tab_total_fc':      '📅 14일 예측 (농축적혈구)',
         'tab_comp_fc':       '🔬 제제별 예측',
+        'tab_btype_fc':      '🩸 혈액형별 예측',
         'tab_blood_type':    '🩸 혈액형별 보유일수',
         'tab_comp_stock':    '📊 제제별 보유량',
         # 심층 분석
@@ -65,7 +66,8 @@ TEXT = {
         'log_title':         '🤖 에이전트 실행 로그',
         # 차트 제목
         'chart_total_fc':    '농축적혈구(RBC) 14일 예측 — 오늘({date}) 실측 기준',
-        'chart_comp_fc':     '제제별 보유량 예측 (2개월)',
+        'chart_comp_fc':     '제제별 보유량 14일 예측 (일별)',
+        'chart_btype_fc':    '혈액형별 보유량 14일 예측 (전체 제제 합산)',
         'chart_blood_days':  '혈액형별 RBC 보유일수',
         'chart_comp_stock':  '제제별 보유량 (역사 평균 대비 %)',
         # 제제명
@@ -98,6 +100,7 @@ TEXT = {
         # Tabs
         'tab_total_fc':      '📅 14-Day Forecast (RBC)',
         'tab_comp_fc':       '🔬 By Component',
+        'tab_btype_fc':      '🩸 By Blood Type',
         'tab_blood_type':    '🩸 Days by Blood Type',
         'tab_comp_stock':    '📊 Component Stock',
         # Deep analysis
@@ -123,7 +126,8 @@ TEXT = {
         'log_title':         '🤖 Agent Execution Log',
         # Chart titles
         'chart_total_fc':    'Red Blood Cells (RBC) · 14-Day Forecast (anchored {date})',
-        'chart_comp_fc':     'Component-wise Forecast (2 Months)',
+        'chart_comp_fc':     'Component-wise 14-Day Forecast (Daily)',
+        'chart_btype_fc':    'Blood-Type 14-Day Forecast (All Components)',
         'chart_blood_days':  'RBC Days by Blood Type',
         'chart_comp_stock':  'Component Stock (% of Historical Avg)',
         # Component names
@@ -218,6 +222,32 @@ def load_forecast():
 @st.cache_data
 def load_monthly_by_type():
     return pd.read_csv(f'{PROCESSED}/monthly_inventory_by_type.csv', parse_dates=['date'])
+
+# ── 정보공개 청구 데이터 (2021–2025 일별, 적십자사 공식) ──────────
+@st.cache_data
+def load_disclosure_inv_by_type():
+    """혈액형별 일별 보유량 (O/A/B/AB, 전체 제제 합산)"""
+    df = pd.read_csv(f'{PROCESSED}/inventory_by_type.csv', parse_dates=['date'])
+    return df.set_index('date').asfreq('D').interpolate()
+
+@st.cache_data
+def load_disclosure_inv_by_component():
+    """제제별 일별 보유량 (RBC/혈소판/혈장/백혈구여과제거혈소판)"""
+    df = pd.read_csv(f'{PROCESSED}/inventory_by_component.csv', parse_dates=['date'])
+    return df.set_index('date').asfreq('D').interpolate()
+
+@st.cache_resource
+def _train_hw_series(col: str, source: str):
+    """정보공개 일별 시계열 1개에 대해 damped Holt-Winters 학습 (캐싱).
+    source: 'type' | 'component'"""
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    df = load_disclosure_inv_by_type() if source == 'type' else load_disclosure_inv_by_component()
+    ts = df[col]
+    model = ExponentialSmoothing(
+        ts, trend='add', damped_trend=True, seasonal='add',
+        seasonal_periods=7, initialization_method='estimated'
+    ).fit(optimized=True)
+    return model, ts, float(model.resid.std())
 
 THRESHOLDS  = load_thresholds()
 
@@ -959,85 +989,59 @@ def chart_historical(n_years=3):
 
 
 # ──────────────────────────────────────────────────────────────────
-#  제제별 예측 (RBC / PLT / FFP / SDP)
+#  일별 14일 예측 — 2x2 서브플롯 공통 빌더 (정보공개 일별 데이터 기반)
 # ──────────────────────────────────────────────────────────────────
-def chart_component_forecast(result, lang='한국어'):
-    """4개 제제 각각 Holt-Winters 예측 — 2x2 서브플롯"""
+def _build_daily_forecast_grid(series_defs, title, lang='한국어'):
+    """
+    series_defs: [{'col','source','label','color','anchor'(optional)}] × 4
+    각 시계열에 damped HW 학습 → 오늘 이후 14일 예측 (anchor 있으면 보정)
+    """
     from plotly.subplots import make_subplots
-    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    T     = TEXT[lang]
+    today = pd.Timestamp.today().normalize()
 
-    T       = TEXT[lang]
-    mbt     = pd.read_csv(f'{PROCESSED}/monthly_inventory_by_type.csv', parse_dates=['date'])
-    today   = pd.Timestamp.today().normalize()
-
-    COMPS   = ['RBC', 'PLT', 'FFP', 'SDP']
-    COLORS  = {'RBC':'#c62828','PLT':'#1565c0','FFP':'#2e7d32','SDP':'#6a1b9a'}
-
-    # 오늘 실측 앵커 (스크래핑 데이터)
-    anchors = {
-        'RBC': result.get('current_inventory') or None,
-        'PLT': result.get('plt_total_units')  or None,
-    }
-
-    subtitles = [T['comp'][c] for c in COMPS]
-    fig = make_subplots(rows=2, cols=2, subplot_titles=subtitles,
+    fig = make_subplots(rows=2, cols=2,
+                        subplot_titles=[s['label'] for s in series_defs],
                         vertical_spacing=0.18, horizontal_spacing=0.10)
 
-    for i, comp in enumerate(COMPS):
+    for i, sd in enumerate(series_defs):
         row, col = divmod(i, 2)
         row, col = row + 1, col + 1
 
-        ts = (mbt[mbt['component_code'] == comp]
-              .sort_values('date').set_index('date')['inventory'])
-        hist = ts.iloc[-12:]   # 최근 12개월 실제 데이터
+        model, ts, _ = _train_hw_series(sd['col'], sd['source'])
+        steps = max((today - ts.index.max()).days, 0)
+        fc_full = model.forecast(steps + 14)
+        fut = fc_full.iloc[steps:steps + 14]
+        fut.index = pd.date_range(today + pd.Timedelta(days=1), periods=14)
 
-        # Holt-Winters 학습 및 8개월 예측 (Dec 2025 → Aug 2026)
-        hw = ExponentialSmoothing(
-            ts, trend='add', seasonal='add',
-            seasonal_periods=12, initialization_method='estimated'
-        ).fit(optimized=True)
-        fc = hw.forecast(8)
+        # 앵커 보정 (오늘 실측값이 있는 시계열만)
+        anchor = sd.get('anchor')
+        if anchor:
+            model_today = fc_full.iloc[steps - 1] if steps > 0 else float(ts.iloc[-1])
+            fut = fut + (anchor - model_today)
 
-        # 앵커 조정: 오늘 실측값이 있으면 해당 월 예측을 실측으로 보정
-        if comp in anchors and anchors[comp]:
-            fc_today = fc[fc.index.month == today.month]
-            if len(fc_today) > 0:
-                adj = anchors[comp] - fc_today.iloc[0]
-                fc  = fc + adj
-
-        # 역사 라인
+        # 예측 라인
         fig.add_trace(go.Scatter(
-            x=hist.index, y=hist.values, name=T['comp'][comp],
-            line=dict(color=COLORS[comp], width=1.8), showlegend=False,
-            hovertemplate='%{x|%Y-%m}: <b>%{y:,}</b><extra>' + T['comp'][comp] + '</extra>',
+            x=fut.index, y=fut.values,
+            name=sd['label'],
+            line=dict(color=sd['color'], width=2, dash='dash'),
+            mode='lines+markers', marker=dict(size=4), showlegend=False,
+            hovertemplate=T['forecast_label'] + ' %{x|%m/%d}: <b>%{y:,.0f}</b><extra></extra>',
         ), row=row, col=col)
 
-        # 예측 라인 (점선)
-        fig.add_trace(go.Scatter(
-            x=fc.index, y=fc.values,
-            name=T['comp'][comp] + f' ({T["forecast_label"]})',
-            line=dict(color=COLORS[comp], width=2, dash='dash'),
-            mode='lines+markers', marker=dict(size=5), showlegend=False,
-            hovertemplate=T['forecast_label'] + ' %{x|%Y-%m}: <b>%{y:,}</b><extra></extra>',
-        ), row=row, col=col)
-
-        # 오늘 실측 마커
-        if comp in anchors and anchors[comp]:
+        # 오늘 실측 마커 (앵커가 있을 때)
+        if anchor:
             fig.add_trace(go.Scatter(
-                x=[today], y=[anchors[comp]],
+                x=[today], y=[anchor],
                 mode='markers',
-                marker=dict(color=COLORS[comp], size=11, symbol='star',
+                marker=dict(color=sd['color'], size=11, symbol='star',
                             line=dict(color='white', width=1.5)),
                 name=T['today_actual'], showlegend=(i == 0),
-                hovertemplate=T['today_actual'] + ': <b>%{y:,}</b><extra></extra>',
+                hovertemplate=T['today_actual'] + ': <b>%{y:,.0f}</b><extra></extra>',
             ), row=row, col=col)
 
-        # 오늘 구분선
-        fig.add_vline(x=today, line_dash='dot', line_color='gray',
-                      line_width=1.0, row=row, col=col)
-
     fig.update_layout(
-        title=dict(text=T['chart_comp_fc'], font=dict(size=13, color='#333')),
+        title=dict(text=title, font=dict(size=13, color='#333')),
         height=460, margin=dict(l=0, r=10, t=65, b=0),
         paper_bgcolor='white', plot_bgcolor='white',
         legend=dict(orientation='h', y=-0.05),
@@ -1045,8 +1049,35 @@ def chart_component_forecast(result, lang='한국어'):
     )
     for ann in fig['layout']['annotations']:
         ann['font'] = dict(size=11, color='#333')
-
     return fig
+
+
+def chart_component_forecast(result, lang='한국어'):
+    """제제별 일별 14일 예측 (정보공개 데이터, RBC는 실시간 앵커)"""
+    T = TEXT[lang]
+    series_defs = [
+        {'col': 'RBC',        'source': 'component', 'label': T['comp']['RBC'],
+         'color': '#c62828',  'anchor': result.get('current_inventory') or None},
+        {'col': 'platelet',   'source': 'component', 'label': T['comp']['PLT'],
+         'color': '#1565c0'},
+        {'col': 'plasma',     'source': 'component', 'label': T['comp']['FFP'],
+         'color': '#2e7d32'},
+        {'col': 'F_platelet', 'source': 'component', 'label': T['comp']['SDP'],
+         'color': '#6a1b9a'},
+    ]
+    return _build_daily_forecast_grid(series_defs, T['chart_comp_fc'], lang)
+
+
+def chart_blood_type_forecast(result, lang='한국어'):
+    """혈액형별(O/A/B/AB) 일별 14일 예측 (정보공개 데이터, 전체 제제 합산)"""
+    T = TEXT[lang]
+    colors = {'O': '#c62828', 'A': '#1565c0', 'B': '#2e7d32', 'AB': '#6a1b9a'}
+    suffix = '형' if lang == '한국어' else ''
+    series_defs = [
+        {'col': bt, 'source': 'type', 'label': f'{bt}{suffix}', 'color': colors[bt]}
+        for bt in ['O', 'A', 'B', 'AB']
+    ]
+    return _build_daily_forecast_grid(series_defs, T['chart_btype_fc'], lang)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -1493,7 +1524,7 @@ if reasoning:
     key_html = (f'<div style="margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.04);'
                 f'border-radius:6px;"><b>⚠️ {T["risk_key_factor"]}:</b> {key}</div>'
                 if key else '')
-    with st.expander(f"{T['risk_reasoning_title']}  ·  {method_label}", expanded=True):
+    with st.expander(f"{T['risk_reasoning_title']}  ·  {method_label}", expanded=False):
         st.markdown(
             f'<div class="scenario-card" style="border-left:4px solid {edge};">'
             f'<ul style="margin:0;padding-left:20px;">{items}</ul>'
@@ -1506,7 +1537,8 @@ st.divider()
 # 메인 차트 2열
 col_l, col_r = st.columns([3, 2])
 with col_l:
-    tab_fc, tab_comp = st.tabs([T['tab_total_fc'], T['tab_comp_fc']])
+    tab_fc, tab_comp, tab_btype = st.tabs(
+        [T['tab_total_fc'], T['tab_comp_fc'], T['tab_btype_fc']])
     with tab_fc:
         st.plotly_chart(chart_forecast(result, lang), use_container_width=True)
         st.caption('Holt-Winters(damped, 주간 계절성) + 실시간 앵커링 · 14일 백테스트 MAPE 9.1%'
@@ -1514,9 +1546,14 @@ with col_l:
                    'Holt-Winters (damped, weekly seasonality) + live anchoring · 14-day backtest MAPE 9.1%')
     with tab_comp:
         st.plotly_chart(chart_component_forecast(result, lang), use_container_width=True)
-        st.caption('혈소판(PLT)·혈장(FFP)·성분채혈혈소판(SDP)은 월별 데이터만 공개되어 월 단위로 예측합니다.'
+        st.caption('적십자사 정보공개 청구로 확보한 2021–2025 일별 데이터 기반 · RBC는 오늘 실측값 앵커링(★)'
                    if lang == '한국어' else
-                   'PLT/FFP/SDP have only monthly data, so forecasts are monthly.')
+                   'Based on daily 2021–2025 data from KRC information disclosure · RBC anchored to today (★)')
+    with tab_btype:
+        st.plotly_chart(chart_blood_type_forecast(result, lang), use_container_width=True)
+        st.caption('혈액형별 일별 보유량(전체 제제 합산, 2021–2025) 기반 14일 예측 · 정보공개 청구 데이터'
+                   if lang == '한국어' else
+                   'Blood-type daily inventory (all components, 2021–2025) from KRC disclosure data')
 with col_r:
     tab1, tab2 = st.tabs([T['tab_blood_type'], T['tab_comp_stock']])
     with tab1:
