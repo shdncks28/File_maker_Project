@@ -49,6 +49,7 @@ TEXT = {
         'tab_trend':         '📉 헌혈률 장기 추세',
         'tab_gap':           '⚖️ 공급-수요 갭',
         'tab_whatif':        '🎯 What-If 최적화',
+        'tab_waste':         '🗑️ 폐기 분석',
         # 보고서/로그
         'report_title':      '📄 운영 보고서',
         'report_tab_current':'🎯 현재 유력 상황 보고서',
@@ -109,6 +110,7 @@ TEXT = {
         'tab_trend':         '📉 Donation Rate Trend',
         'tab_gap':           '⚖️ Supply-Demand Gap',
         'tab_whatif':        '🎯 What-If Optimizer',
+        'tab_waste':         '🗑️ Waste Analysis',
         # Report/Log
         'report_title':      '📄 Operations Report',
         'report_tab_current':'🎯 Current Situation Report',
@@ -1371,6 +1373,170 @@ def chart_supply_demand():
 
 
 # ──────────────────────────────────────────────────────────────────
+#  폐기량 분석 (정보공개 청구 데이터, 2021-2025 일별)
+# ──────────────────────────────────────────────────────────────────
+@st.cache_data
+def load_waste_by_component():
+    return pd.read_csv(f'{PROCESSED}/waste_by_component.csv', parse_dates=['date']).set_index('date')
+
+@st.cache_data
+def load_donation_by_component_daily():
+    return pd.read_csv(f'{PROCESSED}/donation_by_component.csv', parse_dates=['date']).set_index('date')
+
+
+def chart_waste_trend(lang='한국어'):
+    """분석 A: 연간 폐기량(제제별 스택) + 폐기율 추이"""
+    is_ko = (lang == '한국어')
+    wst = load_waste_by_component()
+    don = load_donation_by_component_daily()
+
+    wy = wst.resample('YE').sum()
+    dy = don.resample('YE').sum()
+    years = [d.year for d in wy.index]
+
+    don_total  = dy[['whole_blood', 'apheresis_platelet', 'platelet_plasma', 'plasma']].sum(axis=1)
+    waste_total= wy[['RBC', 'platelet', 'plasma']].sum(axis=1)
+    rate = (waste_total.values / don_total.values) * 100
+
+    fig = go.Figure()
+    comp_labels = {'RBC': ('적혈구' if is_ko else 'RBC'),
+                   'platelet': ('혈소판' if is_ko else 'Platelet'),
+                   'plasma': ('혈장' if is_ko else 'Plasma')}
+    colors = {'RBC': '#c62828', 'platelet': '#1565c0', 'plasma': '#2e7d32'}
+    for comp in ['RBC', 'platelet', 'plasma']:
+        fig.add_trace(go.Bar(
+            x=years, y=wy[comp], name=comp_labels[comp],
+            marker_color=colors[comp],
+            hovertemplate='%{x}<br>' + comp_labels[comp] + ': <b>%{y:,.0f}</b><extra></extra>'
+        ))
+    fig.add_trace(go.Scatter(
+        x=years, y=rate, name=('폐기율(폐기/헌혈)' if is_ko else 'Waste Rate'),
+        line=dict(color='#ff6d00', width=2.5), mode='lines+markers',
+        marker=dict(size=8), yaxis='y2',
+        hovertemplate='%{x}<br>' + ('폐기율' if is_ko else 'Rate') + ': <b>%{y:.2f}%</b><extra></extra>'
+    ))
+    # 2022 피크 강조
+    fig.add_annotation(x=2022, y=rate[1], yref='y2',
+                       text=('⚠️ 2022 급등' if is_ko else '⚠️ 2022 spike'),
+                       showarrow=True, arrowhead=2, ay=-35,
+                       font=dict(size=10, color='#ff6d00'))
+    fig.update_layout(
+        barmode='stack',
+        title=dict(text=('연간 부적격 폐기량 및 폐기율 (2021–2025)'
+                         if is_ko else 'Annual Blood Disposal & Waste Rate (2021–2025)'),
+                   font=dict(size=13, color='#333')),
+        yaxis=dict(title=('폐기량 (unit)' if is_ko else 'Waste (unit)'),
+                   tickformat=',d', showgrid=True, gridcolor='#f0f0f0'),
+        yaxis2=dict(title=('폐기율 (%)' if is_ko else 'Rate (%)'),
+                    overlaying='y', side='right', showgrid=False, range=[0, 6]),
+        legend=dict(orientation='h', y=-0.18),
+        height=380, margin=dict(l=0, r=50, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        hovermode='x unified',
+    )
+    return fig
+
+
+def chart_waste_scatter(lang='한국어'):
+    """분석 B (핵심): 제제별 주간 재고 vs 폐기 산점도 — 유통기한 그라데이션"""
+    from plotly.subplots import make_subplots
+    from scipy.stats import pearsonr
+    is_ko = (lang == '한국어')
+
+    inv = load_disclosure_inv_by_component()
+    wst = load_waste_by_component()
+    inv_w = inv.resample('W').mean()
+    wst_w = wst.resample('W').sum()
+
+    comps = [
+        ('platelet', ('혈소판 · 유통기한 5일' if is_ko else 'Platelet · 5d'),  '#c62828'),
+        ('RBC',      ('적혈구 · 유통기한 35일' if is_ko else 'RBC · 35d'),     '#1565c0'),
+        ('plasma',   ('혈장 · 유통기한 1년'   if is_ko else 'Plasma · 1y'),    '#9e9e9e'),
+    ]
+    fig = make_subplots(rows=1, cols=3, subplot_titles=[c[1] for c in comps],
+                        horizontal_spacing=0.08)
+
+    stats = {}
+    for i, (comp, label, color) in enumerate(comps, start=1):
+        df = pd.concat([inv_w[comp], wst_w[comp]], axis=1, keys=['inv', 'waste']).dropna()
+        r, p = pearsonr(df['inv'], df['waste'])
+        slope, intercept = np.polyfit(df['inv'], df['waste'], 1)
+        stats[comp] = {'r': r, 'p': p, 'slope': slope}
+
+        fig.add_trace(go.Scatter(
+            x=df['inv'], y=df['waste'], mode='markers',
+            marker=dict(size=4, color=color, opacity=0.45),
+            name=label, showlegend=False,
+            hovertemplate=('재고 %{x:,.0f}<br>폐기 %{y:,.0f}<extra></extra>'
+                           if is_ko else 'Stock %{x:,.0f}<br>Waste %{y:,.0f}<extra></extra>'),
+        ), row=1, col=i)
+        # 회귀선
+        xs = np.linspace(df['inv'].min(), df['inv'].max(), 50)
+        fig.add_trace(go.Scatter(
+            x=xs, y=slope * xs + intercept, mode='lines',
+            line=dict(color=color, width=2.5), showlegend=False, hoverinfo='skip',
+        ), row=1, col=i)
+        # r값 annotation
+        sig = '***' if p < 0.001 else ('*' if p < 0.05 else ' n.s.')
+        fig.add_annotation(
+            text=f'r = {r:+.2f}{sig}', xref=f'x{i} domain', yref=f'y{i} domain',
+            x=0.05, y=0.95, showarrow=False,
+            font=dict(size=12, color=color, family='Arial Black'),
+        )
+
+    fig.update_layout(
+        title=dict(text=('주간 평균 재고 vs 주간 폐기량 — 유통기한이 짧을수록 강한 결합'
+                         if is_ko else 'Weekly Stock vs Waste — Shorter Shelf Life, Tighter Coupling'),
+                   font=dict(size=13, color='#333')),
+        height=340, margin=dict(l=0, r=10, t=70, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+    )
+    for ann in fig['layout']['annotations'][:3]:
+        ann['font'] = dict(size=11, color='#333')
+    return fig, stats
+
+
+def chart_waste_lag(lang='한국어'):
+    """분석 C: 헌혈(공급) → 혈소판 폐기 시차 상관"""
+    from scipy.stats import pearsonr
+    is_ko = (lang == '한국어')
+
+    don = load_donation_by_component_daily()
+    wst = load_waste_by_component()
+    d = don['whole_blood'].rolling(7).mean().dropna()
+    w = wst['platelet'].rolling(7).mean().dropna()
+
+    lags = list(range(0, 15))
+    rs = []
+    for lag in lags:
+        a = d.shift(lag).dropna()
+        common = a.index.intersection(w.index)
+        r, _ = pearsonr(a[common], w[common])
+        rs.append(r)
+
+    colors = ['#c62828' if l <= 5 else '#90a4ae' for l in lags]
+    fig = go.Figure(go.Bar(
+        x=lags, y=rs, marker_color=colors,
+        hovertemplate=('lag %{x}일: r=%{y:.3f}<extra></extra>'
+                       if is_ko else 'lag %{x}d: r=%{y:.3f}<extra></extra>'),
+    ))
+    fig.add_vrect(x0=-0.5, x1=5.5, fillcolor='rgba(198,40,40,0.06)', line_width=0,
+                  annotation_text=('혈소판 유통기한(5일) 구간' if is_ko else 'Platelet shelf life (5d)'),
+                  annotation_position='top right', annotation_font_size=9)
+    fig.update_layout(
+        title=dict(text=('헌혈량 → 혈소판 폐기 시차 상관 (7일 이동평균)'
+                         if is_ko else 'Donation → Platelet Waste Lag Correlation (7d MA)'),
+                   font=dict(size=13, color='#333')),
+        xaxis=dict(title=('시차 (일)' if is_ko else 'Lag (days)'), dtick=1),
+        yaxis=dict(title='r', showgrid=True, gridcolor='#f0f0f0'),
+        height=320, margin=dict(l=0, r=10, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        showlegend=False,
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────
 #  What-If 최적화: Newsvendor 정책 비교 차트
 # ──────────────────────────────────────────────────────────────────
 def chart_optimization(opt_result, lang='한국어'):
@@ -1625,8 +1791,8 @@ with st.expander(T['log_title'], expanded=False):
 st.divider()
 st.markdown(f"## {T['analysis_title']}")
 
-tab_a, tab_b, tab_c, tab_d = st.tabs(
-    [T['tab_campaign'], T['tab_trend'], T['tab_gap'], T['tab_whatif']])
+tab_a, tab_b, tab_c, tab_d, tab_e = st.tabs(
+    [T['tab_campaign'], T['tab_trend'], T['tab_gap'], T['tab_whatif'], T['tab_waste']])
 
 with tab_a:
     st.markdown("#### 헌혈 캠페인 강도별 14일 보유량 변화 시뮬레이션")
@@ -1763,6 +1929,58 @@ with tab_d:
         f"📐 Newsvendor: TC = Cu·E[Short] + Co·E[Waste]  |  "
         f"Cu={wf_cu}, Co={wf_co}, 5,000 Monte Carlo runs"
     )
+
+# ── 탭 E: 폐기량 분석 (정보공개 데이터) ──────────────────────────
+with tab_e:
+    is_ko = (lang == '한국어')
+    st.markdown("#### " + ("혈액 폐기 실태 분석 — 유통기한과 폐기의 구조적 결합"
+                           if is_ko else
+                           "Blood Disposal Analysis — Shelf Life & Waste Coupling"))
+    st.caption("적십자사 정보공개 청구 데이터(2021–2025 일별 부적격 폐기량, 유효기간 경과 포함) 기반 분석입니다."
+               if is_ko else
+               "Based on KRC disclosure data (2021–2025 daily disposal, incl. expired units).")
+
+    # ── 핵심 차트: 재고 vs 폐기 산점도 ───────────────────────────
+    fig_scatter, w_stats = chart_waste_scatter(lang)
+
+    # KPI 3개
+    wst_y = load_waste_by_component().resample('YE').sum()
+    don_y = load_donation_by_component_daily().resample('YE').sum()
+    waste_2025 = wst_y.iloc[-1][['RBC', 'platelet', 'plasma']].sum()
+    don_2025   = don_y.iloc[-1][['whole_blood','apheresis_platelet','platelet_plasma','plasma']].sum()
+    plt_r = w_stats['platelet']['r']
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("🗑️ " + ("2025 연간 폐기량" if is_ko else "2025 Annual Waste"),
+              f"{waste_2025:,.0f} unit",
+              ("적혈구+혈소판+혈장" if is_ko else "RBC+PLT+Plasma"))
+    k2.metric("📊 " + ("2025 폐기율" if is_ko else "2025 Waste Rate"),
+              f"{waste_2025/don_2025*100:.2f}%",
+              ("폐기 ÷ 헌혈" if is_ko else "Waste ÷ Donation"))
+    k3.metric("🔗 " + ("혈소판 재고↔폐기 상관" if is_ko else "PLT Stock↔Waste"),
+              f"r = {plt_r:+.2f}",
+              "p < 0.001 ***")
+
+    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.caption(("유통기한 5일인 혈소판만 재고와 폐기가 유의하게 결합(r=%.2f***) — "
+                "재고가 쌓일수록 폐기가 늘어나는 구조를 실데이터로 확인. "
+                "적혈구(35일)·혈장(1년)은 무관." % plt_r)
+               if is_ko else
+               ("Only platelets (5-day shelf life) show significant stock-waste coupling (r=%.2f***). "
+                "RBC (35d) and plasma (1y) show none." % plt_r))
+
+    st.markdown("---")
+    col_w1, col_w2 = st.columns(2)
+    with col_w1:
+        st.plotly_chart(chart_waste_trend(lang), use_container_width=True)
+        st.caption("2022년 폐기율 4.37% 급등 — 코로나 회복기 캠페인 과열 시기와 일치 (Reactive Panic의 실측 사례)"
+                   if is_ko else
+                   "2022 waste rate spiked to 4.37% — coinciding with post-COVID campaign surges (Reactive Panic).")
+    with col_w2:
+        st.plotly_chart(chart_waste_lag(lang), use_container_width=True)
+        st.caption("헌혈 급증 후 5일(혈소판 유통기한) 내 폐기 상관이 집중 — 공급 스파이크가 폐기로 이어지는 경로"
+                   if is_ko else
+                   "Correlation concentrates within 5 days (platelet shelf life) after donation spikes.")
 
 st.divider()
 if st.button(T['refresh_btn']):
