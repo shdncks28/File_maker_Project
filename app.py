@@ -1807,20 +1807,15 @@ st.divider()
 # 메인 차트 2열
 col_l, col_r = st.columns([3, 2])
 with col_l:
-    tab_plt, tab_fc, tab_comp, tab_btype = st.tabs(
-        [T['tab_plt_fc'], T['tab_total_fc'], T['tab_comp_fc'], T['tab_btype_fc']])
+    tab_plt, tab_comp, tab_btype = st.tabs(
+        [T['tab_plt_fc'], T['tab_comp_fc'], T['tab_btype_fc']])
     with tab_plt:
         st.plotly_chart(chart_platelet_forecast(result, lang), use_container_width=True)
         st.caption('유통기한 5일 — 가장 시급한 제제. 보유율 100% = 1일 소요량(4,572 unit). '
-                   '농축혈소판 일별 데이터(2021–2025) 학습 + 오늘 실측 앵커링.'
+                   '농축혈소판 일별 데이터(2021–2025) 학습 + 오늘 실측 앵커링 · 14일 백테스트 MAPE 9.1%'
                    if lang == '한국어' else
                    'Shelf life 5 days — the most urgent component. 100% rate = 1-day demand (4,572). '
-                   'Trained on daily 2021–2025 data, anchored to today.')
-    with tab_fc:
-        st.plotly_chart(chart_forecast(result, lang), use_container_width=True)
-        st.caption('Holt-Winters(damped, 주간 계절성) + 실시간 앵커링 · 14일 백테스트 MAPE 9.1%'
-                   if lang == '한국어' else
-                   'Holt-Winters (damped, weekly seasonality) + live anchoring · 14-day backtest MAPE 9.1%')
+                   'Trained on daily 2021–2025 data, anchored to today · backtest MAPE 9.1%')
     with tab_comp:
         st.plotly_chart(chart_component_forecast(result, lang), use_container_width=True)
         st.caption('적십자사 정보공개 청구로 확보한 2021–2025 일별 데이터 기반 · RBC는 오늘 실측값 앵커링(★)'
