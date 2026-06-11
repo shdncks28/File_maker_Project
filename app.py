@@ -38,9 +38,10 @@ TEXT = {
         'kpi_min':           '14일 예측 최저',
         'kpi_action':        '📢 권고 대응',
         # 탭
-        'tab_total_fc':      '📅 14일 예측 (농축적혈구)',
+        'tab_plt_fc':        '📅 14일 예측 (혈소판)',
+        'tab_total_fc':      '🩸 14일 예측 (적혈구)',
         'tab_comp_fc':       '🔬 제제별 예측',
-        'tab_btype_fc':      '🩸 혈액형별 예측',
+        'tab_btype_fc':      '🅾️ 혈액형별 예측',
         'tab_blood_type':    '🩸 혈액형별 보유일수',
         'tab_comp_stock':    '📊 제제별 보유량',
         # 심층 분석
@@ -99,9 +100,10 @@ TEXT = {
         'kpi_min':           '14-Day Min Forecast',
         'kpi_action':        '📢 Recommended Action',
         # Tabs
-        'tab_total_fc':      '📅 14-Day Forecast (RBC)',
+        'tab_plt_fc':        '📅 14-Day Forecast (Platelet)',
+        'tab_total_fc':      '🩸 14-Day Forecast (RBC)',
         'tab_comp_fc':       '🔬 By Component',
-        'tab_btype_fc':      '🩸 By Blood Type',
+        'tab_btype_fc':      '🅾️ By Blood Type',
         'tab_blood_type':    '🩸 Days by Blood Type',
         'tab_comp_stock':    '📊 Component Stock',
         # Deep analysis
@@ -1054,6 +1056,89 @@ def _build_daily_forecast_grid(series_defs, title, lang='한국어'):
     return fig
 
 
+def chart_platelet_forecast(result, lang='한국어'):
+    """혈소판(농축) 14일 예측 — 유통기한 5일, 가장 시급한 제제 (메인 차트)"""
+    is_ko = (lang == '한국어')
+    today = pd.Timestamp.today().normalize()
+
+    plt_units = result.get('plt_total_units') or 0
+    plt_rate  = result.get('plt_rate') or 0
+    # 1일 소요량: 보유율(%) = 보유량/1일소요 → 역산, 실패 시 공시값 4,572
+    daily_need = (plt_units / (plt_rate / 100)) if plt_units and plt_rate else 4572.0
+
+    # damped HW 학습 (정보공개 일별 농축혈소판 계열) + 오늘 실측 앵커
+    model, ts, resid_std = _train_hw_series('platelet', 'component')
+    steps   = max((today - ts.index.max()).days, 0)
+    fc_full = model.forecast(steps + 14)
+    fut     = fc_full.iloc[steps:steps + 14]
+    fut.index = pd.date_range(today + pd.Timedelta(days=1), periods=14)
+    anchor_ok = bool(plt_units) and result.get('scrape_success')
+    if anchor_ok:
+        model_today = fc_full.iloc[steps - 1] if steps > 0 else float(ts.iloc[-1])
+        fut = fut + (plt_units - model_today)
+
+    all_x = ([today] + list(fut.index)) if anchor_ok else list(fut.index)
+    all_y = ([plt_units] + list(fut.values)) if anchor_ok else list(fut.values)
+
+    fig = go.Figure()
+    # 신뢰구간
+    fig.add_trace(go.Scatter(
+        x=list(fut.index) + list(fut.index[::-1]),
+        y=list(fut.values + 1.96 * resid_std) + list((fut.values - 1.96 * resid_std))[::-1],
+        fill='toself', fillcolor='rgba(21,101,192,0.10)',
+        line=dict(color='rgba(0,0,0,0)'),
+        name=('95% 신뢰구간' if is_ko else '95% CI'), hoverinfo='skip',
+    ))
+    # 예측 라인
+    fig.add_trace(go.Scatter(
+        x=all_x, y=all_y,
+        name=('14일 예측' if is_ko else '14-day forecast'),
+        line=dict(color='#1565c0', width=2.5),
+        mode='lines+markers',
+        marker=dict(size=6, color='#1565c0', line=dict(color='white', width=1.5)),
+        hovertemplate='%{x|%m/%d}<br><b>%{y:,.0f} unit</b><extra></extra>',
+    ))
+    # 오늘 실측
+    if anchor_ok:
+        fig.add_trace(go.Scatter(
+            x=[today], y=[plt_units],
+            name=('오늘 실측' if is_ko else 'Today (live)'),
+            mode='markers',
+            marker=dict(color='#c62828', size=13, symbol='circle',
+                        line=dict(color='white', width=2.5)),
+            hovertemplate=(f'오늘 {plt_units:,.0f} unit (보유율 {plt_rate:.0f}%)<extra></extra>'
+                           if is_ko else f'Today {plt_units:,.0f}<extra></extra>'),
+        ))
+
+    # 보유율 임계선 (100% = 1일분)
+    x0 = today - pd.Timedelta(hours=12)
+    x1 = fut.index[-1] + pd.Timedelta(hours=12)
+    for pct, color, dash in [(200, '#1565c0', 'dot'), (150, '#ffb300', 'dot'), (100, '#d50000', 'longdash')]:
+        v = daily_need * pct / 100
+        label = (f'보유율 {pct}% ({pct/100:.0f}일분)' if is_ko else f'{pct}% ({pct/100:.0f}d)')
+        fig.add_shape(type='line', x0=x0, x1=x1, y0=v, y1=v,
+                      line=dict(color=color, width=1.3, dash=dash))
+        fig.add_annotation(x=x1, y=v, text=label, showarrow=False,
+                           xanchor='left', font=dict(size=9, color=color), xshift=4)
+
+    title = (f'농축혈소판(PLT) 14일 예측 — 유통기한 5일 · 오늘({today.strftime("%Y-%m-%d")}) 실측 기준'
+             if is_ko else
+             f'Platelet 14-Day Forecast — 5-day shelf life · anchored {today.strftime("%Y-%m-%d")}')
+    fig.update_layout(
+        title=dict(text='🩹 ' + title, font=dict(size=13, color='#333')),
+        xaxis=dict(showgrid=False, tickformat='%m/%d',
+                   range=[today - pd.Timedelta(days=1), fut.index[-1] + pd.Timedelta(days=2)]),
+        yaxis=dict(tickformat=',d',
+                   title=('보유량 (unit)' if is_ko else 'Stock (unit)'),
+                   rangemode='tozero', showgrid=True, gridcolor='#f0f0f0'),
+        legend=dict(orientation='h', y=-0.18, x=0),
+        height=340, margin=dict(l=0, r=110, t=45, b=0),
+        paper_bgcolor='white', plot_bgcolor='white',
+        hovermode='x unified',
+    )
+    return fig
+
+
 def chart_component_forecast(result, lang='한국어'):
     """제제별 일별 14일 예측 (정보공개 데이터, RBC는 실시간 앵커)"""
     T = TEXT[lang]
@@ -1061,7 +1146,7 @@ def chart_component_forecast(result, lang='한국어'):
         {'col': 'RBC',        'source': 'component', 'label': T['comp']['RBC'],
          'color': '#c62828',  'anchor': result.get('current_inventory') or None},
         {'col': 'platelet',   'source': 'component', 'label': T['comp']['PLT'],
-         'color': '#1565c0'},
+         'color': '#1565c0',  'anchor': result.get('plt_total_units') or None},
         {'col': 'plasma',     'source': 'component', 'label': T['comp']['FFP'],
          'color': '#2e7d32'},
         {'col': 'F_platelet', 'source': 'component', 'label': T['comp']['SDP'],
@@ -1722,8 +1807,15 @@ st.divider()
 # 메인 차트 2열
 col_l, col_r = st.columns([3, 2])
 with col_l:
-    tab_fc, tab_comp, tab_btype = st.tabs(
-        [T['tab_total_fc'], T['tab_comp_fc'], T['tab_btype_fc']])
+    tab_plt, tab_fc, tab_comp, tab_btype = st.tabs(
+        [T['tab_plt_fc'], T['tab_total_fc'], T['tab_comp_fc'], T['tab_btype_fc']])
+    with tab_plt:
+        st.plotly_chart(chart_platelet_forecast(result, lang), use_container_width=True)
+        st.caption('유통기한 5일 — 가장 시급한 제제. 보유율 100% = 1일 소요량(4,572 unit). '
+                   '농축혈소판 일별 데이터(2021–2025) 학습 + 오늘 실측 앵커링.'
+                   if lang == '한국어' else
+                   'Shelf life 5 days — the most urgent component. 100% rate = 1-day demand (4,572). '
+                   'Trained on daily 2021–2025 data, anchored to today.')
     with tab_fc:
         st.plotly_chart(chart_forecast(result, lang), use_container_width=True)
         st.caption('Holt-Winters(damped, 주간 계절성) + 실시간 앵커링 · 14일 백테스트 MAPE 9.1%'

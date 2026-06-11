@@ -119,20 +119,34 @@ def scrape_blood_inventory() -> dict:
             rbc["days_by_type"]        = {t: _to_float(cells[i + 2]) for i, t in enumerate(blood_types)}
 
     # ── 혈소판(PLT) ───────────────────────────────────────────────
+    # 표에 농축혈소판 블록 → 성분채혈혈소판 블록이 순서대로 나옴.
+    # block을 추적해 둘을 분리 저장 (농축혈소판이 일별 통계의 'platelet'과 동일 계열)
     plt_data = {}
+    block = None   # 'conc'(농축) | 'apheresis'(성분채혈)
     for row in tables[2].find_all("tr")[1:]:
         cells = [td.get_text(strip=True) for td in row.find_all(["th", "td"])]
         if not cells:
             continue
-        if "농축혈소판" in cells[0] and "1일 소요량" in cells[1]:
-            plt_data["daily_need"]         = _to_float(cells[2])
-            plt_data["daily_need_by_type"] = {t: _to_float(cells[i + 3]) for i, t in enumerate(blood_types)}
+        if "농축혈소판" in cells[0]:
+            block = "conc"
+        elif "성분채혈" in cells[0]:
+            block = "apheresis"
+
+        prefix = "conc" if block == "conc" else "apheresis"
+        if "1일 소요량" in cells[0] or (len(cells) > 1 and "1일 소요량" in cells[1]):
+            off = 2 if cells[0] not in ("1일 소요량",) else 1
+            plt_data[f"{prefix}_daily_need"] = _to_float(cells[off])
         elif "현재 혈액보유량" in cells[0]:
-            plt_data["total_units"]        = _to_float(cells[1])
-            plt_data["units_by_type"]      = {t: _to_float(cells[i + 2]) for i, t in enumerate(blood_types)}
+            plt_data[f"{prefix}_units"]        = _to_float(cells[1])
+            plt_data[f"{prefix}_units_by_type"]= {t: _to_float(cells[i + 2]) for i, t in enumerate(blood_types)}
         elif "보유율" in cells[0]:
-            plt_data["total_rate"]         = _to_float(cells[1])
-            plt_data["rate_by_type"]       = {t: _to_float(cells[i + 2]) for i, t in enumerate(blood_types)}
+            plt_data[f"{prefix}_rate"]         = _to_float(cells[1])
+
+    # 하위 호환: total_* = 농축혈소판 (일별 통계 'platelet' 계열과 일치)
+    plt_data["total_units"] = plt_data.get("conc_units")
+    plt_data["total_rate"]  = plt_data.get("conc_rate")
+    plt_data["daily_need"]  = plt_data.get("conc_daily_need")
+    plt_data["units_by_type"] = plt_data.get("conc_units_by_type", {})
 
     # ── KRC 위험 등급 ─────────────────────────────────────────────
     krc_risk = _classify_krc_risk(rbc.get("total_days", 999))
